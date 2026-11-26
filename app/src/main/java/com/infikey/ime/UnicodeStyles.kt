@@ -14,24 +14,27 @@ object UnicodeStyles {
         "Fraktur", "Mono", "Small Caps", "Strikethrough"
     )
 
-    const val COUNT = NAMES.size
+    val COUNT = NAMES.size
 
     fun name(index: Int): String = NAMES[index % COUNT]
 
     fun transform(text: String, index: Int): String = when (index % COUNT) {
         0 -> text
         8 -> text.map { smallCaps(it) }.joinToString("")
-        9 -> text.flatMap { listOf(it, '\u0336') }.joinToString("")
+        9 -> buildString { for (c in text) { append(c); append('\u0336') } }
         else -> {
             val (upper, lower, digits) = rangesFor(index % COUNT)
-            text.map { c ->
-                when {
-                    c in 'A'..'Z' && upper != null -> upper + (c - 'A')
-                    c in 'a'..'z' && lower != null -> lower + (c - 'a')
-                    c in '0'..'9' && digits != null -> digits + (c - '0')
-                    else -> c
+            buildString {
+                for (c in text) {
+                    val cp = when {
+                        c in 'A'..'Z' && upper != null -> upper + (c - 'A')
+                        c in 'a'..'z' && lower != null -> lower + (c - 'a')
+                        c in '0'..'9' && digits != null -> digits + (c - '0')
+                        else -> c.code
+                    }
+                    appendCodePoint(cp)
                 }
-            }.joinToString("")
+            }
         }
     }
 
