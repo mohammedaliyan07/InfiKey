@@ -154,10 +154,66 @@ class Prefs(context: Context) {
         set(v) = sp.edit().putStringSet("theme_codes", v).apply()
 
     // ---- Feature toggles (all 85) ----
-    fun feature(id: String, default: Boolean = true): Boolean =
-        sp.getBoolean("feat_$id", default)
+    /**
+     * Central resolver: a registry id always maps to the REAL control behind
+     * that feature — the typed accessor when one exists (so the dedicated
+     * settings screens and the Features tab stay in sync), otherwise its
+     * feat_<id> flag. Behavior code calls [feature], never duplicate logic.
+     */
+    fun feature(id: String, default: Boolean = true): Boolean = when (id) {
+        "glide" -> glideEnabled
+        "suggestions" -> suggestionsEnabled
+        "autocorrect" -> autoCorrect
+        "caps" -> autoCaps
+        "number_row" -> numberRow
+        "haptics_f" -> haptics
+        "key_sound" -> keySound
+        "one_handed" -> oneHanded != "off"
+        "key_height" -> sp.getBoolean("feat_key_height", true)
+        "clipboard_history" -> clipboardHistoryEnabled
+        "elder_mode" -> elderMode
+        "translit" -> translitLang.isNotEmpty()
+        "per_app_lang" -> perAppAuto
+        "auto_emoji" -> autoEmoji
+        "idle_egg" -> idleEasterEgg
+        "shape_gestures" -> shapeGestures
+        "read_aloud" -> readAloudBeforeSend
+        "ai_log" -> aiLogEnabled
+        else -> sp.getBoolean("feat_$id", default)
+    }
 
-    fun setFeature(id: String, v: Boolean) = sp.edit().putBoolean("feat_$id", v).apply()
+    /** Central writer — the Features tab writes here; typed accessors stay consistent. */
+    fun setFeature(id: String, v: Boolean) {
+        when (id) {
+            "glide" -> glideEnabled = v
+            "suggestions" -> suggestionsEnabled = v
+            "autocorrect" -> autoCorrect = v
+            "caps" -> autoCaps = v
+            "number_row" -> numberRow = v
+            "haptics_f" -> haptics = v
+            "key_sound" -> keySound = v
+            "one_handed" -> oneHanded = if (v) "right" else "off"
+            "clipboard_history" -> clipboardHistoryEnabled = v
+            "elder_mode" -> elderMode = v
+            "translit" -> if (v) { if (translitLang.isEmpty()) translitLang = "hi" } else translitLang = ""
+            "per_app_lang" -> perAppAuto = v
+            "auto_emoji" -> autoEmoji = v
+            "idle_egg" -> idleEasterEgg = v
+            "shape_gestures" -> shapeGestures = v
+            "read_aloud" -> readAloudBeforeSend = v
+            "ai_log" -> aiLogEnabled = v
+            else -> sp.edit().putBoolean("feat_$id", v).apply()
+        }
+    }
+
+    /** Whether a keyboard layout may currently appear in the switcher (#25–#36, #16, #17). */
+    fun layoutEnabled(layoutId: String): Boolean = when (layoutId) {
+        "latin_qwerty" -> feature("latin")
+        "dev" -> feature("dev_layout")
+        "markdown" -> feature("markdown_layout")
+        "numpad" -> feature("numpad")
+        else -> feature(layoutId)
+    }
 
     // ---- Misc ----
     fun putString(k: String, v: String) = sp.edit().putString(k, v).apply()

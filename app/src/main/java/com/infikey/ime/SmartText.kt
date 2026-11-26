@@ -150,4 +150,45 @@ object SmartText {
         s.any { it.code in 0x1C50..0x1C7F } -> "ol_chiki"
         else -> null
     }
+
+    /**
+     * Safe grapheme delete (#19): length in chars of the cluster right before
+     * the cursor. Emoji ZWJ sequences, skin tones, variation selectors and
+     * Indic matra/virama/nukta chains are never split in half.
+     */
+    fun clusterLen(before: String): Int {
+        if (before.isEmpty()) return 0
+        var end = before.length
+        var count = 0
+        // 1) trailing combining marks, joiners and emoji modifiers
+        while (end > 0) {
+            val c = before[end - 1]
+            val t = Character.getType(c)
+            if (c.code == 0x200C || c.code == 0x200D || c.code == 0xFE0F || c.code == 0xFE0E ||
+                t == Character.NON_SPACING_MARK.toInt() ||
+                t == Character.COMBINING_SPACING_MARK.toInt()
+            ) { end--; count++ } else break
+        }
+        // 2) one base code point (surrogate-pair aware)
+        if (end > 0) {
+            val c = before[end - 1]
+            if (Character.isLowSurrogate(c) && end >= 2 && Character.isHighSurrogate(before[end - 2])) {
+                count += 2; end -= 2
+            } else { count++; end-- }
+        }
+        // 3) ZWJ-joined sequence (👨‍👩‍👧): keep consuming the previous cluster
+        if (end > 0 && before[end - 1].code == 0x200D) count += clusterLen(before.substring(0, end))
+        return count.coerceAtLeast(1)
+    }
+
+    // ---- Indian greetings pack (#83): quick chips on an empty field ----
+    private val GREETINGS = listOf(
+        "🙏 Namaste" to "Namaste 🙏 ",
+        "🌙 Adaab" to "Adaab 🌙 ",
+        "🛕 Vanakkam" to "Vanakkam 🛕 ",
+        "⚔️ Sat Sri Akal" to "Sat Sri Akal ⚔️ ",
+        "🌼 Nomoshkar" to "Nomoshkar 🌼 "
+    )
+
+    fun greetings(): List<Pair<String, String>> = GREETINGS
 }
