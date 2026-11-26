@@ -14,6 +14,11 @@ android {
         targetSdk 35
         versionCode 1
         versionName '1.0.0'
+        ndk {
+            // armv7 is excluded: llama.cpp llamafile SGEMM uses F16 NEON
+            // intrinsics (vld1q_f16) that don't exist on 32-bit ARM
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
         externalNativeBuild {
             cmake {
                 arguments '-DANDROID_STL=c++_shared',
