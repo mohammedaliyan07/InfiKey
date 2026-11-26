@@ -25,6 +25,7 @@ class ClipboardPanel(context: Context) : ScrollView(context) {
     var callbacks: Callbacks? = null
 
     private val theme get() = ThemeEngine(context).current()
+    private val prefs = Global.prefs
     private val d = resources.displayMetrics.density
     private val list = LinearLayout(context)
 
@@ -47,7 +48,7 @@ class ClipboardPanel(context: Context) : ScrollView(context) {
         }
         list.addView(header)
 
-        // tools row: clean · ask AI · clipboard → script (#75, #81, #70)
+        // tools row: clean (#75) · ask AI (#78) · clipboard → script (#76)
         val top = runCatching { Global.clipboard.all() }.getOrDefault(emptyList())
             .firstOrNull { !it.isSensitive() }
         val tools = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
@@ -65,11 +66,11 @@ class ClipboardPanel(context: Context) : ScrollView(context) {
             }
             setOnClickListener { if (top == null) return@setOnClickListener; onTap() }
         }
-        tools.addView(tool("🧹 Clean") { callbacks?.onClean(top!!.text) })
-        tools.addView(tool("🤖 Ask AI") { callbacks?.onAskAi(top!!.text) })
+        if (prefs.feature("clipboard_plain")) tools.addView(tool("🧹 Clean") { callbacks?.onClean(top!!.text) })
+        if (prefs.feature("clipboard_ai")) tools.addView(tool("🤖 Ask AI") { callbacks?.onAskAi(top!!.text) })
         for ((lang, label) in listOf("devanagari" to "→ देवनागरी", "tamil" to "→ தமிழ்",
                 "telugu" to "→ తెలుగు", "bengali" to "→ বাংলা", "gujarati" to "→ ગુજરાતી", "gurmukhi" to "→ ਪੰਜਾਬੀ")) {
-            tools.addView(tool(label) { callbacks?.onToScript(top!!.text, lang) })
+            if (prefs.feature("clipboard_translate")) tools.addView(tool(label) { callbacks?.onToScript(top!!.text, lang) })
         }
         list.addView(tools)
 
@@ -110,29 +111,34 @@ class ClipboardPanel(context: Context) : ScrollView(context) {
                 setClip(e.text)
                 callbacks?.onPaste(e.text)
             }
-            setOnLongClickListener { Global.clipboard.pin(e); rebuild(); true }
+            // pin clipboard items (#74): long-press keeps the row on top
+            if (prefs.feature("clipboard_pin"))
+                setOnLongClickListener { Global.clipboard.pin(e); rebuild(); true }
         }
         row.addView(body)
-        val edit = TextView(context).apply {
-            text = "✎"
-            textSize = 14f
-            setTextColor(theme.hint)
-            setPadding((10 * d).toInt(), 0, (4 * d).toInt(), 0)
-            setOnClickListener {
-                val box = android.widget.EditText(context).apply { setText(e.text) }
-                android.app.AlertDialog.Builder(context)
-                    .setTitle("Edit before paste")
-                    .setView(box)
-                    .setPositiveButton("Paste") { _, _ ->
-                        val t = box.text.toString()
-                        setClip(t)
-                        callbacks?.onPaste(t)
-                    }
-                    .setNegativeButton("Cancel", null)
-                    .show()
+        // edit before paste (#77): tweak the snippet inline
+        if (prefs.feature("clipboard_edit")) {
+            val edit = TextView(context).apply {
+                text = "✎"
+                textSize = 14f
+                setTextColor(theme.hint)
+                setPadding((10 * d).toInt(), 0, (4 * d).toInt(), 0)
+                setOnClickListener {
+                    val box = android.widget.EditText(context).apply { setText(e.text) }
+                    android.app.AlertDialog.Builder(context)
+                        .setTitle("Edit before paste")
+                        .setView(box)
+                        .setPositiveButton("Paste") { _, _ ->
+                            val t = box.text.toString()
+                            setClip(t)
+                            callbacks?.onPaste(t)
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                }
             }
+            row.addView(edit)
         }
-        row.addView(edit)
         val del = TextView(context).apply {
             text = "✕"
             textSize = 14f

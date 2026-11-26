@@ -14,6 +14,7 @@ class AiRouter(private val context: Context) {
     enum class Tier { FAST, DEEP }
 
     private val prefs = context.getSharedPreferences("infikey", Context.MODE_PRIVATE)
+    private val cfg = Prefs(context)
     val models = ModelManager(context)
 
     private val endpoints = EndpointStore(
@@ -55,19 +56,23 @@ class AiRouter(private val context: Context) {
     }
 
     fun activeCloud(): CloudEndpoint? {
+        // any-site cloud API (#55): endpoints vanish when the toggle is off
+        if (!cfg.feature("cloud_any")) return null
         val id = prefs.getString("active_cloud_endpoint", "") ?: ""
         return endpoints.active(id) ?: endpoints.list().firstOrNull()
     }
 
     fun engineFor(tier: Tier): AiEngine? {
         val mode = prefs.getString("ai_mode", "auto") ?: "auto"
+        // fully offline mode (#59): airplane-proof — cloud engines never answer
+        if (mode == "offline" || cfg.feature("offline_mode")) return fastEngine
         if (mode == "cloud") return activeCloud()?.let { CloudEngine(it) }
-        if (mode == "offline") return fastEngine
         return when (tier) {
             Tier.FAST -> fastEngine ?: activeCloud()?.let { CloudEngine(it) }
-            Tier.DEEP -> deepEngine
-                ?: if (prefs.getBoolean("deep_prefer_ondevice", false)) fastEngine
-                else activeCloud()?.let { CloudEngine(it) }
+            // multi-model routing (#53): off → every tier runs the fast engine
+            Tier.DEEP -> if (!cfg.feature("multi_model_router")) fastEngine
+                else deepEngine ?: (if (prefs.getBoolean("deep_prefer_ondevice", false)) fastEngine
+                    else activeCloud()?.let { CloudEngine(it) })
         }
     }
 
@@ -83,10 +88,9 @@ class AiRouter(private val context: Context) {
         out
     }
 
-    /** AI transparency log (#63): record every AI send, on-device or cloud. */
+    /** AI transparency log (#57): record every AI send, on-device or cloud. */
     private fun logAi(engine: AiEngine, chars: Int) {
-        val p = Prefs(context)
-        if (p.aiLogEnabled) p.appendAiLog(if (engine.id.startsWith("cloud")) "cloud" else "device", chars)
+        if (cfg.aiLogEnabled) cfg.appendAiLog(if (engine.id.startsWith("cloud")) "cloud" else "device", chars)
     }
 
     /**
