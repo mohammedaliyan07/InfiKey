@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Obsidian Aurora palette -->
+    <color name="ink">#101014</color>
+    <color name="surface">#16161D</color>
+    <color name="key_fill">#1C1C26</color>
+    <color name="key_fill_special">#23232F</color>
+    <color name="text_primary">#F4F4FA</color>
+    <color name="text_hint">#8A8A9A</color>
+    <color name="accent_violet">#8B5CF6</color>
+    <color name="accent_mint">#34D399</color>
+    <color name="glow">#A78BFA</color>
+</resources>

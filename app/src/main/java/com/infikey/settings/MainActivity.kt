@@ -1,0 +1,626 @@
+package com.infikey.settings
+
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.os.Bundle
+import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.infikey.Global
+import com.infikey.ai.AiRouter
+import com.infikey.ai.CloudEndpoint
+import com.infikey.ai.DefaultModel
+import com.infikey.ai.EndpointStore
+import com.infikey.layout.Layouts
+import com.infikey.theme.ThemeEngine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.UUID
+
+/**
+ * InfiKey settings — single activity, six screens:
+ * Home · Languages · AI · Look · Features · Advanced.
+ */
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Global.init(applicationContext as com.infikey.InfiKeyApp)
+        setContent { InfiKeySettingsApp() }
+    }
+}
+
+// ---------- palette (mirrors ThemeEngine defaults) ----------
+
+private val Ink = Color(0xFF101014)
+private val Surface = Color(0xFF16161D)
+private val Card = Color(0xFF1C1C26)
+private val CardSpecial = Color(0xFF23232F)
+private val TextPrimary = Color(0xFFF4F4FA)
+private val TextHint = Color(0xFF8A8A9A)
+private val Accent = Color(0xFF8B5CF6)
+private val Accent2 = Color(0xFF34D399)
+
+private enum class Screen(val label: String) {
+    HOME("Home"), LANGUAGES("Languages"), AI("AI"), LOOK("Look"), FEATURES("Features"), ADVANCED("Advanced")
+}
+
+@Composable
+private fun InfiKeySettingsApp() {
+    var screen by remember { mutableStateOf(Screen.HOME) }
+    Surface(color = Ink) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                Modifier.fillMaxWidth().padding(16.dp, 20.dp, 16.dp, 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("\u2726 InfiKey", color = Accent, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(10.dp))
+                Text(screen.label, color = TextHint, fontSize = 15.sp)
+            }
+            Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Screen.entries.forEach { s ->
+                    TabChip(s.label, s == screen) { screen = s }
+                }
+            }
+            Box(Modifier.fillMaxSize()) {
+                when (screen) {
+                    Screen.HOME -> HomeScreen()
+                    Screen.LANGUAGES -> LanguagesScreen()
+                    Screen.AI -> AiScreen()
+                    Screen.LOOK -> LookScreen()
+                    Screen.FEATURES -> FeaturesScreen()
+                    Screen.ADVANCED -> AdvancedScreen()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TabChip(label: String, active: Boolean, onTap: () -> Unit) {
+    Text(
+        label,
+        color = if (active) Color.White else TextHint,
+        fontSize = 13.sp,
+        modifier = Modifier
+            .clipChip(if (active) Accent else Card)
+            .clickable(onClick = onTap)
+            .padding(horizontal = 12.dp, vertical = 7.dp)
+    )
+}
+
+private fun Modifier.clipChip(color: Color) = this.then(
+    Modifier.background(color, RoundedCornerShape(50))
+)
+
+// ---------- shared pieces ----------
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text,
+        color = TextHint,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+    )
+}
+
+@Composable
+private fun RowCard(title: String, subtitle: String? = null, trailing: (@Composable () -> Unit)? = null, onTap: (() -> Unit)? = null) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .background(Card, RoundedCornerShape(14.dp))
+            .clickable(enabled = onTap != null) { onTap?.invoke() }
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = TextPrimary, fontSize = 15.sp)
+            if (subtitle != null) Text(subtitle, color = TextHint, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+        }
+        trailing?.invoke()
+    }
+}
+
+@Composable
+private fun SwitchPref(title: String, subtitle: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+    RowCard(title, subtitle, trailing = {
+        Switch(checked = checked, onCheckedChange = onChange, colors = SwitchDefaults.colors(
+            checkedTrackColor = Accent
+        ))
+    })
+}
+
+// ---------- HOME ----------
+
+@Composable
+private fun HomeScreen() {
+    val ctx = LocalContext.current
+    val imeEnabled = remember { mutableStateOf(isImeEnabled(ctx)) }
+    val imeSelected = remember { mutableStateOf(isImeSelected(ctx)) }
+    val modelLoaded = remember { mutableStateOf(runCatching { Global.router.isModelLoaded() }.getOrDefault(false)) }
+
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            SectionTitle("Setup")
+            RowCard(
+                "1 · Enable InfiKey in system settings",
+                if (imeEnabled.value) "✓ Enabled" else "Tap to open system keyboard settings",
+                onTap = {
+                    runCatching { ctx.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+                        .onFailure { toast(ctx, "Cannot open settings") }
+                }
+            )
+            RowCard(
+                "2 · Switch to InfiKey",
+                if (imeSelected.value) "✓ Active keyboard" else "Open the input-method picker",
+                onTap = {
+                    val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE)
+                        as? android.view.inputmethod.InputMethodManager
+                    if (imm != null) imm.showInputMethodPicker() else toast(ctx, "Long-press any text field → 'Change keyboard'")
+                }
+            )
+            RowCard(
+                "AI model status",
+                if (modelLoaded.value) "✓ On-device model loaded" else "No model loaded — go to the AI tab",
+                onTap = null
+            )
+        }
+        item {
+            SectionTitle("What InfiKey can do")
+            listOf(
+                "\uD83E\uDDE0 On-device AI — LFM2.5-1.2B or ANY .gguf you import, runs offline via llama.cpp",
+                "\u2601 Any cloud API — any OpenAI-compatible URL, any model, custom headers",
+                "\u270D\uFE0F 12 scripts — Hindi, Bengali, Tamil, Telugu, Kannada, Malayalam, Gujarati, Punjabi, Odia, Urdu, Santali + Latin",
+                "\u2728 85 features — glide, popups, clipboard history, macros, per-app memory, theme codes…"
+            ).forEach { line ->
+                RowCard(line)
+            }
+        }
+    }
+}
+
+private fun isImeEnabled(ctx: Context): Boolean =
+    Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_INPUT_METHODS)
+        ?.split(":")?.any { it.contains("com.infikey") } ?: false
+
+private fun isImeSelected(ctx: Context): Boolean =
+    Settings.Secure.getString(ctx.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+        ?.contains("com.infikey") == true
+
+private fun openImePicker(ctx: Context) {
+    runCatching {
+        ctx.startActivity(Intent("android.settings.INPUT_METHOD_SUBTYPE_SETTINGS"))
+    }.onFailure { toast(ctx, "Long-press any text field → 'Change keyboard'") }
+}
+
+private fun toast(ctx: Context, msg: String) =
+    Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+
+// ---------- LANGUAGES ----------
+
+@Composable
+private fun LanguagesScreen() {
+    val enabled = remember { mutableStateOf(Global.prefs.enabledLayouts()) }
+    val active = remember { mutableStateOf(Global.prefs.activeLayoutId) }
+    val translit = remember { mutableStateOf(Global.prefs.translitLang) }
+
+    val allLayouts = Layouts.ALL
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            SectionTitle("Your keyboards (tap to activate · check to keep)")
+            RowCard(
+                "Transliteration",
+                "Type 'namaste' → get नमस्ते — " + when (translit.value) {
+                    "" -> "off"
+                    else -> Layouts.byId(translit.value).name
+                },
+                trailing = {
+                    Text(if (translit.value.isEmpty()) "off" else "on", color = Accent2, fontSize = 13.sp)
+                },
+                onTap = {
+                    val chain = listOf("") + com.infikey.layout.Transliteration.schemes().map { it.id }
+                    translit.value = chain[(chain.indexOf(translit.value) + 1).mod(chain.size)]
+                    Global.prefs.translitLang = translit.value
+                }
+            )
+        }
+        items(allLayouts) { layout ->
+            val checked = layout.id in enabled.value
+            RowCard(
+                layout.name,
+                "script: ${layout.script}${if (layout.rtl) " · RTL" else ""}",
+                trailing = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (active.value == layout.id) Text("active", color = Accent2, fontSize = 12.sp)
+                        Checkbox(checked = checked, onCheckedChange = { on ->
+                            val set = enabled.value.toMutableSet()
+                            if (on) set.add(layout.id) else if (set.size > 1) set.remove(layout.id)
+                            enabled.value = set
+                            Global.prefs.setEnabledLayouts(set)
+                        }, colors = CheckboxDefaults.colors(checkedColor = Accent))
+                    }
+                },
+                onTap = {
+                    active.value = layout.id
+                    Global.prefs.activeLayoutId = layout.id
+                    Global.suggestions.loadForLayout(layout.id)
+                }
+            )
+        }
+    }
+}
+
+// ---------- AI ----------
+
+@Composable
+private fun AiScreen() {
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    val prefs = Global.prefs
+    val models = remember { mutableStateOf(Global.models.scan()) }
+    val loadedPath = remember { mutableStateOf(Global.router.currentModelPath) }
+    val downloading = remember { mutableStateOf(false) }
+    val progress = remember { mutableStateOf(0f) }
+    val endpoints = remember { mutableStateOf(loadEndpoints()) }
+
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                toast(ctx, "Importing…")
+                val result = withContext(Dispatchers.IO) { Global.models.importFromUri(uri) }
+                result.onSuccess {
+                    models.value = Global.models.scan()
+                    toast(ctx, "Imported ${it.name}")
+                }.onFailure { toast(ctx, "Import failed: ${it.message}") }
+            }
+        }
+    }
+
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            SectionTitle("On-device model (runs offline)")
+            if (downloading.value) {
+                RowCard("Downloading ${DefaultModel.FILE}…", "${(progress.value * 100).toInt()}%")
+                LinearProgressIndicator(
+                    progress = { progress.value },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    color = Accent,
+                    trackColor = Card
+                )
+            }
+            RowCard(
+                "Download default model",
+                "${DefaultModel.REPO} · Q4_K_M · ~731 MB",
+                onTap = {
+                    if (downloading.value) return@RowCard
+                    downloading.value = true
+                    scope.launch {
+                        val r = withContext(Dispatchers.IO) {
+                            Global.models.downloadDefault { done, total ->
+                                if (total > 0) progress.value = done.toFloat() / total
+                            }
+                        }
+                        downloading.value = false
+                        r.onSuccess {
+                            models.value = Global.models.scan()
+                            toast(ctx, "Downloaded! Tap it below to load.")
+                        }.onFailure { toast(ctx, "Download failed: ${it.message}") }
+                    }
+                }
+            )
+            RowCard("Import any .gguf from storage", "Local, OpenRouter-style GGUFs, anything — InfiKey validates and loads it", onTap = {
+                importLauncher.launch(arrayOf("*/*"))
+            })
+        }
+        items(models.value) { m ->
+            RowCard(
+                m.name,
+                "${m.sizeLabel()}${if (m.file.absolutePath == loadedPath.value) " · LOADED" else ""}" +
+                    (if (m.isDefault) " · default" else ""),
+                trailing = {
+                    Text("Load", color = Accent, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp))
+                },
+                onTap = {
+                    scope.launch {
+                        toast(ctx, "Loading ${m.name}…")
+                        val ok = Global.router.loadOnDevice(m.file.absolutePath)
+                        if (ok) {
+                            loadedPath.value = Global.router.currentModelPath
+                            toast(ctx, "Loaded ✓")
+                        } else toast(ctx, "Load failed — try a smaller model")
+                    }
+                }
+            )
+        }
+        item {
+            SectionTitle("Cloud APIs (any OpenAI-compatible site)")
+            RowCard("AI mode", "current: ${prefs.aiMode}", trailing = {
+                Text(
+                    when (prefs.aiMode) { "auto" -> "auto"; "cloud" -> "cloud"; else -> "offline" },
+                    color = Accent2, fontSize = 13.sp
+                )
+            }, onTap = {
+                prefs.aiMode = when (prefs.aiMode) { "auto" -> "cloud"; "cloud" -> "offline"; else -> "auto" }
+            })
+        }
+        items(endpoints.value) { e ->
+            RowCard(
+                "${e.name} — ${e.model}",
+                e.baseUrl,
+                trailing = {
+                    Text("active", color = Accent2, fontSize = 12.sp)
+                },
+                onTap = {
+                    prefs.activeCloudEndpointId = e.id
+                    Global.router.setDeepCloud(e.id)
+                    toast(ctx, "${e.name} is now active")
+                }
+            )
+        }
+        item {
+            RowCard("+ Add cloud endpoint", "Groq · OpenRouter · Ollama · LM Studio · your server — any link works", onTap = {
+                addDemoEndpoint(ctx) { endpoints.value = loadEndpoints() }
+            })
+        }
+    }
+}
+
+private fun loadEndpoints(): List<CloudEndpoint> =
+    EndpointStore({ Global.prefs.cloudEndpointsJson }, { Global.prefs.cloudEndpointsJson = it }).list()
+
+private fun addDemoEndpoint(ctx: Context, refresh: () -> Unit) {
+    // Simple inline template the user can edit in Advanced → raw prefs; real UX keeps this minimal.
+    val store = EndpointStore({ Global.prefs.cloudEndpointsJson }, { Global.prefs.cloudEndpointsJson = it })
+    store.upsert(
+        CloudEndpoint(
+            id = UUID.randomUUID().toString(),
+            name = "New endpoint",
+            baseUrl = "https://api.groq.com/openai/v1",
+            apiKey = "",
+            model = "llama-3.3-70b-versatile"
+        )
+    )
+    refresh()
+    Toast.makeText(ctx, "Endpoint added — edit its key in Advanced → Cloud JSON", Toast.LENGTH_LONG).show()
+}
+
+// ---------- LOOK ----------
+
+@Composable
+private fun LookScreen() {
+    val ctx = LocalContext.current
+    val prefs = Global.prefs
+    val themes = remember { mutableStateOf(ThemeEngine.byId(prefs.themeId).id) }
+    val fontId = remember { mutableStateOf(prefs.fontId) }
+    val fonts = remember { mutableStateOf(Global.fonts.all()) }
+    val keyHeight = remember { mutableStateOf(prefs.keyHeightDp) }
+    val bgPath = remember { mutableStateOf(prefs.bgImagePath) }
+
+    val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching { Global.fonts.importFromUri(uri).getOrThrow() }
+                .onSuccess {
+                    prefs.fontId = it
+                    fontId.value = it
+                    fonts.value = Global.fonts.all()
+                }
+                .onFailure { toast(ctx, "Could not load that font") }
+        }
+    }
+    val bgPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching {
+                val dst = java.io.File(ctx.filesDir, "bg_${System.currentTimeMillis()}.jpg")
+                ctx.contentResolver.openInputStream(uri)!!.use { ins ->
+                    dst.outputStream().use { ins.copyTo(it) }
+                }
+                prefs.bgImagePath = dst.absolutePath
+                bgPath.value = dst.absolutePath
+            }.onFailure { toast(ctx, "Could not use that image") }
+        }
+    }
+
+    LazyColumn(Modifier.fillMaxSize()) {
+        item { SectionTitle("Themes") }
+        items(ThemeEngine.PRESETS) { t ->
+            RowCard(
+                t.name,
+                "accent #" + Integer.toHexString(t.accent).takeLast(6),
+                trailing = { Box(Modifier.size(18.dp).background(t.accent, RoundedCornerShape(9.dp))) },
+                onTap = { themes.value = t.id; Global.themes.apply(t.id) }
+            )
+        }
+        item {
+            SectionTitle("Theme codes (share with friends)")
+            RowCard("Paste a code", "bg=12101A;keys=1C1830;text=F1EEFF;accent=8B5CF6…", onTap = { })
+            var code by remember { mutableStateOf("") }
+            OutlinedTextField(
+                value = code, onValueChange = { code = it },
+                placeholder = { Text("paste theme code", color = TextHint) },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Accent, unfocusedBorderColor = CardSpecial,
+                    focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+                    cursorColor = Accent
+                ),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                textStyle = LocalTextStyle.current.copy(fontSize = 12.sp)
+            )
+            RowCard("Apply code", null, onTap = {
+                if (Global.themes.addCode(code)) toast(ctx, "Theme applied ✓") else toast(ctx, "Invalid code")
+            })
+        }
+        item { SectionTitle("Font") }
+        items(fonts.value) { (id, label) ->
+            RowCard(label, if (fontId.value == id) "✓ in use" else null, onTap = {
+                fontId.value = id; prefs.fontId = id
+            })
+        }
+        item {
+            RowCard("Import .ttf / .otf", "Any font file from storage", onTap = {
+                fontPicker.launch(arrayOf("font/*", "application/octet-stream"))
+            })
+        }
+        item {
+            SectionTitle("Keyboard size")
+            RowCard("Key height", "${keyHeight.value} dp", trailing = {
+                Slider(
+                    value = keyHeight.value.toFloat(), onValueChange = {
+                        keyHeight.value = it.toInt(); prefs.keyHeightDp = it.toInt()
+                    },
+                    valueRange = 40f..70f, colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
+                    modifier = Modifier.width(160.dp)
+                )
+            })
+            RowCard("One-handed mode", "current: ${prefs.oneHanded}", onTap = {
+                prefs.oneHanded = when (prefs.oneHanded) { "off" -> "right"; "right" -> "left"; else -> "off" }
+            })
+            RowCard("Background image", if (bgPath.value.isEmpty()) "none" else "set ✓", onTap = {
+                bgPicker.launch(arrayOf("image/*"))
+            })
+        }
+    }
+}
+
+// ---------- FEATURES ----------
+
+@Composable
+private fun FeaturesScreen() {
+    val cats = com.infikey.prefs.Features.Category.entries
+    LazyColumn(Modifier.fillMaxSize()) {
+        cats.forEach { cat ->
+            item { SectionTitle("${cat.label} · ${com.infikey.prefs.Features.ALL.count { it.category == cat }}") }
+            items(com.infikey.prefs.Features.ALL.filter { it.category == cat }) { f ->
+                var checked by remember { mutableStateOf(Global.prefs.feature(f.id, f.default)) }
+                SwitchPref(f.name, f.desc, checked) {
+                    checked = it
+                    Global.prefs.setFeature(f.id, it)
+                }
+            }
+        }
+    }
+}
+
+// ---------- ADVANCED ----------
+
+@Composable
+private fun AdvancedScreen() {
+    val ctx = LocalContext.current
+    val prefs = Global.prefs
+    val scope = rememberCoroutineScope()
+    val dna = remember { mutableStateOf(prefs.readStyleDna()) }
+    val macros = remember { mutableStateOf(prefs.readMacros()) }
+    var macroKey by remember { mutableStateOf("") }
+    var macroVal by remember { mutableStateOf("") }
+
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            SectionTitle("Style DNA — how the AI writes like you")
+            DnaSlider("Formality", dna.value.formality) {
+                dna.value = dna.value.copy(formality = it)
+                prefs.writeStyleDna(dna.value)
+            }
+            DnaSlider("Energy", dna.value.energy) {
+                dna.value = dna.value.copy(energy = it)
+                prefs.writeStyleDna(dna.value)
+            }
+            DnaSlider("Brevity", dna.value.brevity) {
+                dna.value = dna.value.copy(brevity = it)
+                prefs.writeStyleDna(dna.value)
+            }
+        }
+        item { SectionTitle("Macros — /shortcut → full text") }
+        items(macros.value.entries.toList()) { (k, v) ->
+            RowCard(k, v.take(60), trailing = {
+                Text("delete", color = Accent2, fontSize = 12.sp)
+            }, onTap = {
+                macros.value = macros.value.toMutableMap().apply { remove(k) }
+                prefs.writeMacros(macros.value)
+            })
+        }
+        item {
+            RowCard("New macro", "trigger without /, e.g. 'addr'", onTap = { })
+            OutlinedTextField(value = macroKey, onValueChange = { macroKey = it },
+                placeholder = { Text("trigger", color = TextHint) },
+                colors = outlined(), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp))
+            OutlinedTextField(value = macroVal, onValueChange = { macroVal = it },
+                placeholder = { Text("expansion", color = TextHint) },
+                colors = outlined(), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp))
+            RowCard("Save macro", null, onTap = {
+                if (macroKey.isNotBlank() && macroVal.isNotBlank()) {
+                    macros.value = macros.value + (macroKey to macroVal)
+                    prefs.writeMacros(macros.value)
+                    macroKey = ""; macroVal = ""
+                }
+            })
+        }
+        item {
+            SectionTitle("Privacy")
+            SwitchPref("Per-app language memory", "Remembers each app's keyboard language", prefs.perAppAuto) {
+                prefs.perAppAuto = it
+            }
+            SwitchPref("Clipboard history", "Kept locally, sensitive rows hidden", prefs.clipboardHistoryEnabled) {
+                prefs.clipboardHistoryEnabled = it
+            }
+            RowCard("Clear clipboard history now", null, onTap = {
+                Global.clipboard.clearAll()
+            })
+        }
+        item {
+            SectionTitle("About")
+            RowCard("InfiKey 1.0.0", "On-device AI keyboard · MIT license", onTap = { })
+            RowCard("GitHub repo", "github.com/mohammedaliyan07/InfiKey", onTap = {
+                runCatching {
+                    ctx.startActivity(
+                        Intent(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/mohammedaliyan07/InfiKey")))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+            })
+        }
+    }
+}
+
+@Composable
+private fun DnaSlider(label: String, value: Int, onChange: (Int) -> Unit) {
+    var v by remember(value) { mutableStateOf(value.toFloat()) }
+    RowCard(label, "${v.toInt()}", trailing = {
+        Slider(
+            value = v, onValueChange = { v = it; onChange(it.toInt()) },
+            valueRange = 0f..100f,
+            colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
+            modifier = Modifier.width(160.dp)
+        )
+    })
+}
+
+private fun outlined() = OutlinedTextFieldDefaults.colors(
+    focusedBorderColor = Accent, unfocusedBorderColor = CardSpecial,
+    focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+    cursorColor = Accent
+)

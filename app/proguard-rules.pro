@@ -1,0 +1,4 @@
+-keep class com.infikey.ai.LlamaBridge { *; }
+-keep class com.infikey.ai.LlamaBridge$TokenCallback { *; }
+-keepclassmembers class com.infikey.ai.LlamaBridge { native <methods>; }
+-dontwarn org.slf4j.**
