@@ -28,6 +28,12 @@ class KeyboardView(context: Context) : View(context) {
 
     companion object { const val TAG = "KeyboardView" }
 
+    /** Layouts whose glyphs need the system Noto Indic faces (#40). */
+    private val INDIC_IDS = setOf(
+        "devanagari", "bengali", "tamil", "telugu", "kannada", "malayalam",
+        "gujarati", "gurmukhi", "odia", "urdu", "ol_chiki"
+    )
+
     interface Callbacks {
         fun onKey(output: String, action: com.infikey.layout.KeyAction)
         fun onGlideStart(x: Float, y: Float)
@@ -86,9 +92,13 @@ class KeyboardView(context: Context) : View(context) {
     // shape gestures (#74) — sampled touch path, classified on lift
     private val shapePoints = mutableListOf<Pair<Float, Float>>()
 
-    // spacebar trackpad (#49) — continuous slide moves the caret
+    // spacebar trackpad (#13) — continuous slide moves the caret
     private var trackpadLastX = Float.NaN
     private var trackpadAccum = 0f
+
+    // swipe-to-delete (#23) — slide left on backspace wipes word after word
+    private var backspaceLastX = Float.NaN
+    private var backspaceAccum = 0f
 
     private val powerSave: Boolean
         get() = (context.getSystemService(android.os.PowerManager::class.java))?.isPowerSaveMode == true
@@ -100,22 +110,33 @@ class KeyboardView(context: Context) : View(context) {
             return when {
                 // swipe down anywhere → hide keyboard
                 dy > 120 && abs(dy) > abs(dx) * 1.6f -> { callbacks?.onHideRequest(); true }
+                // swipe up on space → switch language (#24)
+                dy < -120 && abs(dy) > abs(dx) * 1.2f && spaceUnder(e1) -> {
+                    callbacks?.onKey("globe", com.infikey.layout.KeyAction.GLOBE); true
+                }
                 // horizontal swipes on space / delete handled via active key at fling start
                 else -> horizontalGesture(e1, dx)
             }
         }
 
+        private fun spaceUnder(e1: MotionEvent): Boolean =
+            prefs.feature("swipe_space_lang") &&
+                keyRects.firstOrNull { it.first.contains(e1.x, e1.y) }?.second?.action ==
+                com.infikey.layout.KeyAction.SPACE
+
         private fun horizontalGesture(e1: MotionEvent, dx: Float): Boolean {
             val k = keyRects.firstOrNull { it.first.contains(e1.x, e1.y) }?.second
             return when {
-                k?.action == com.infikey.layout.KeyAction.SPACE && dx < -60 -> {
-                    gestureCursor(-1); true
-                }
-                k?.action == com.infikey.layout.KeyAction.SPACE && dx > 60 -> {
-                    gestureCursor(1); true
-                }
+                // cursor drag on spacebar (#12): slide left/right moves the caret
+                k?.action == com.infikey.layout.KeyAction.SPACE && dx < -60 &&
+                    prefs.feature("cursor_drag") -> { gestureCursor(-1); true }
+                k?.action == com.infikey.layout.KeyAction.SPACE && dx > 60 &&
+                    prefs.feature("cursor_drag") -> { gestureCursor(1); true }
                 k?.action == com.infikey.layout.KeyAction.BACKSPACE && dx < -60 -> {
-                    callbacks?.onKey("delete_word", com.infikey.layout.KeyAction.NONE); true
+                    // delete-word (#18) unless continuous swipe-to-delete (#23) owns the gesture
+                    if (!prefs.feature("swipe_delete") && prefs.feature("delete_word"))
+                        callbacks?.onKey("delete_word", com.infikey.layout.KeyAction.NONE)
+                    true
                 }
                 else -> false
             }
@@ -142,8 +163,13 @@ class KeyboardView(context: Context) : View(context) {
         val tf: Typeface? = runCatching {
             com.infikey.Global.fonts.typeface(prefs.fontId)
         }.getOrNull()
-        textPaint.typeface = tf
-        hintTextPaint.typeface = tf
+        // Indic font pack (#40): the system Noto faces shape every Indic script
+        // correctly — prefer them over a user font that may miss the glyphs
+        val id = layout?.id
+        val chosen = if (prefs.feature("indic_fonts") && id != null && id in INDIC_IDS)
+            Typeface.create("sans-serif", Typeface.NORMAL) else tf
+        textPaint.typeface = chosen
+        hintTextPaint.typeface = chosen
         invalidate()
     }
 
@@ -229,10 +255,12 @@ class KeyboardView(context: Context) : View(context) {
             val base = if (special) theme.keySpecial else theme.key
             fill.color = base
 
-            // soft neumorphic shadow
-            shadowPaint.color = base
-            shadowPaint.maskFilter = BlurMaskFilter(d * 3f, BlurMaskFilter.Blur.NORMAL)
-            canvas.drawRoundRect(rect, radius, radius, shadowPaint)
+            // soft neumorphic shadow (#71) — togglable flat rendering
+            if (prefs.feature("neumorphic")) {
+                shadowPaint.color = base
+                shadowPaint.maskFilter = BlurMaskFilter(d * 3f, BlurMaskFilter.Blur.NORMAL)
+                canvas.drawRoundRect(rect, radius, radius, shadowPaint)
+            }
             canvas.drawRoundRect(rect, radius, radius, fill)
 
             if (key.action == com.infikey.layout.KeyAction.SHIFT && (shiftOn || capsLocked)) {
@@ -266,8 +294,8 @@ class KeyboardView(context: Context) : View(context) {
             val cx = rect.centerX()
             val cy = rect.centerY() - (textPaint.textSize - textPaint.ascent() - textPaint.descent()) / 2
             canvas.drawText(label, cx, cy, textPaint)
-            if (key.popups.isNotEmpty() && !special) {
-                hintTextPaint.color = theme.hint
+            if (prefs.feature("long_press_popups") && key.popups.isNotEmpty() && !special) {
+                hintTextPaint.color = if (prefs.feature("accessibility")) theme.text else theme.hint
                 canvas.drawText(key.popups.first(), rect.right - d * 8, rect.top + d * 12, hintTextPaint)
             }
         }
@@ -313,12 +341,15 @@ class KeyboardView(context: Context) : View(context) {
     private fun drawBackgroundImage(canvas: Canvas, radius: Float) {
         val path = prefs.bgImagePath
         if (path.isEmpty()) return
+        if (!prefs.feature("photo_keyboard")) return
         runCatching {
             val bmp = android.graphics.BitmapFactory.decodeFile(path) ?: return
-            val dim = prefs.bgDim
+            // blur & dim sliders (#26) only affect the backdrop when enabled
+            val fx = prefs.feature("blur_dim")
+            val dim = if (fx) prefs.bgDim else 0f
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = ((1f - dim) * 255).toInt() }
             // blur (#25): downscale then upscale — cheap, real-looking softening
-            val pre = if (prefs.bgBlur > 1f) {
+            val pre = if (fx && prefs.bgBlur > 1f) {
                 val f = 1f / (prefs.bgBlur / 4f).coerceIn(1f, 16f)
                 android.graphics.Bitmap.createScaledBitmap(
                     bmp, (bmp.width * f).toInt().coerceAtLeast(1),
@@ -367,7 +398,9 @@ class KeyboardView(context: Context) : View(context) {
                 trackpadLastX = event.x
                 trackpadAccum = 0f
                 activeKey?.let { ripple(it); haptic(); if (prefs.keySound) click() }
-                postDelayed(longPressRunnable, 380)
+                backspaceLastX = event.x
+                backspaceAccum = 0f
+                if (prefs.feature("long_press_popups")) postDelayed(longPressRunnable, 380)
             }
             MotionEvent.ACTION_MOVE -> {
                 val now = keyRects.firstOrNull { it.first.contains(event.x, event.y) }?.second
@@ -383,20 +416,38 @@ class KeyboardView(context: Context) : View(context) {
                     ) > 8)
                 ) trailPoints.add(event.x to event.y)
                 if (shapePoints.size < 64) shapePoints.add(event.x to event.y)
-                // spacebar trackpad: slide moves the caret continuously (#49)
+                // spacebar slide (#12 basic caret move, #13 trackpad = fine step)
                 if (activeKey?.action == com.infikey.layout.KeyAction.SPACE &&
                     !trackpadLastX.isNaN()
                 ) {
                     trackpadAccum += event.x - trackpadLastX
                     trackpadLastX = event.x
-                    val step = resources.displayMetrics.density * 34f
-                    while (trackpadAccum > step) {
-                        callbacks?.onKey("cursor_right", com.infikey.layout.KeyAction.NONE)
-                        trackpadAccum -= step
-                    }
-                    while (trackpadAccum < -step) {
-                        callbacks?.onKey("cursor_left", com.infikey.layout.KeyAction.NONE)
-                        trackpadAccum += step
+                    val fine = prefs.feature("trackpad")
+                    if (fine || prefs.feature("cursor_drag")) {
+                        val step = resources.displayMetrics.density * (if (fine) 12f else 34f)
+                        while (trackpadAccum > step) {
+                            callbacks?.onKey("cursor_right", com.infikey.layout.KeyAction.NONE)
+                            trackpadAccum -= step
+                        }
+                        while (trackpadAccum < -step) {
+                            callbacks?.onKey("cursor_left", com.infikey.layout.KeyAction.NONE)
+                            trackpadAccum += step
+                        }
+                    } else trackpadAccum = 0f
+                }
+                // swipe-to-delete (#23): slide left on backspace wipes fast
+                if (activeKey?.action == com.infikey.layout.KeyAction.BACKSPACE &&
+                    !backspaceLastX.isNaN()
+                ) {
+                    val dxm = event.x - backspaceLastX
+                    if (dxm < 0) backspaceAccum -= dxm else backspaceAccum = 0f
+                    backspaceLastX = event.x
+                    if (prefs.feature("swipe_delete")) {
+                        val step = resources.displayMetrics.density * 60f
+                        while (backspaceAccum > step) {
+                            callbacks?.onKey("delete_word", com.infikey.layout.KeyAction.NONE)
+                            backspaceAccum -= step
+                        }
                     }
                 }
             }
