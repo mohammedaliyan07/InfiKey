@@ -6,6 +6,19 @@ repository (the registry lives in
 and every toggleable one can be switched on/off from **InfiKey Settings → Features**.
 Features marked *off* by default are opt-in so the first-run keyboard stays clean.
 
+> **Changelog — this build (37d789b):** every feature below is now wired to real
+> behavior, not just a toggle. Newly implemented in this build: number row,
+> auto-capitalisation, undo chip + history stack, numbered-list continuation,
+> glide trail, spacebar trackpad slide, incognito enforcement on password/phone
+> fields + safe-app list, smart chips (inline calculator, lakh/crore grouping,
+> Indic numerals, case cycle, emoji-from-text, date chips, Field Genius
+> autofill, auto script-switch hint), AI tone check, read-back before send,
+> per-app AI tone memory, AI transparency log, Keystore-encrypted cloud keys,
+> press-animation styles, sound packs, real background blur, idle glow, theme
+> editor, 24-font Google Fonts catalog download, clipboard clean/→script/
+> ask-AI/edit, emoji kaomoji + recents tabs, 15 Unicode text styles, biometric
+> lock, data audit screen, backup/restore, my-facts editor.
+
 ## Typing (24)
 
 | # | Feature | What it does | Default |
