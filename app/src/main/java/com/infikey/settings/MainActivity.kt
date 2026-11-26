@@ -347,9 +347,11 @@ private fun AiScreen() {
                     }
                 }
             )
-            RowCard("Import any .gguf from storage", "Local, OpenRouter-style GGUFs, anything — InfiKey validates and loads it", onTap = {
-                importLauncher.launch(arrayOf("*/*"))
-            })
+            if (Global.prefs.feature("any_gguf")) {
+                RowCard("Import any .gguf from storage", "Local, OpenRouter-style GGUFs, anything — InfiKey validates and loads it", onTap = {
+                    importLauncher.launch(arrayOf("*/*"))
+                })
+            }
         }
         items(models.value) { m ->
             RowCard(
@@ -382,24 +384,26 @@ private fun AiScreen() {
                 prefs.aiMode = when (prefs.aiMode) { "auto" -> "cloud"; "cloud" -> "offline"; else -> "auto" }
             })
         }
-        items(endpoints.value) { e ->
-            RowCard(
-                "${e.name} — ${e.model}",
-                e.baseUrl,
-                trailing = {
-                    Text("active", color = Accent2, fontSize = 12.sp)
-                },
-                onTap = {
-                    prefs.activeCloudEndpointId = e.id
-                    Global.router.setDeepCloud(e.id)
-                    toast(ctx, "${e.name} is now active")
-                }
-            )
-        }
-        item {
-            RowCard("+ Add cloud endpoint", "Groq · OpenRouter · Ollama · LM Studio · your server — any link works", onTap = {
-                addDemoEndpoint(ctx) { endpoints.value = loadEndpoints() }
-            })
+        if (Global.prefs.feature("cloud_any")) {
+            items(endpoints.value) { e ->
+                RowCard(
+                    "${e.name} — ${e.model}",
+                    e.baseUrl,
+                    trailing = {
+                        Text("active", color = Accent2, fontSize = 12.sp)
+                    },
+                    onTap = {
+                        prefs.activeCloudEndpointId = e.id
+                        Global.router.setDeepCloud(e.id)
+                        toast(ctx, "${e.name} is now active")
+                    }
+                )
+            }
+            item {
+                RowCard("+ Add cloud endpoint", "Groq · OpenRouter · Ollama · LM Studio · your server — any link works", onTap = {
+                    addDemoEndpoint(ctx) { endpoints.value = loadEndpoints() }
+                })
+            }
         }
     }
 }
@@ -462,88 +466,100 @@ private fun LookScreen() {
     }
 
     LazyColumn(Modifier.fillMaxSize()) {
-        item { SectionTitle("Themes") }
-        items(ThemeEngine.PRESETS) { t ->
-            RowCard(
-                t.name,
-                "accent #" + Integer.toHexString(t.accent).takeLast(6),
-                trailing = { Box(Modifier.size(18.dp).background(Color(t.accent), RoundedCornerShape(9.dp))) },
-                onTap = { themes.value = t.id; Global.themes.apply(t.id) }
-            )
+        if (Global.prefs.feature("themes")) {
+            item { SectionTitle("Themes") }
+            items(ThemeEngine.PRESETS) { t ->
+                RowCard(
+                    t.name,
+                    "accent #" + Integer.toHexString(t.accent).takeLast(6),
+                    trailing = { Box(Modifier.size(18.dp).background(Color(t.accent), RoundedCornerShape(9.dp))) },
+                    onTap = { themes.value = t.id; Global.themes.apply(t.id) }
+                )
+            }
         }
-        item {
-            SectionTitle("Theme codes (share with friends)")
-            RowCard("Paste a code", "bg=12101A;keys=1C1830;text=F1EEFF;accent=8B5CF6…", onTap = { })
-            var code by remember { mutableStateOf("") }
-            OutlinedTextField(
-                value = code, onValueChange = { code = it },
-                placeholder = { Text("paste theme code", color = TextHint) },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Accent, unfocusedBorderColor = CardSpecial,
-                    focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
-                    cursorColor = Accent
-                ),
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                textStyle = LocalTextStyle.current.copy(fontSize = 12.sp)
-            )
-            RowCard("Apply code", null, onTap = {
-                if (Global.themes.addCode(code)) toast(ctx, "Theme applied ✓") else toast(ctx, "Invalid code")
-            })
+        if (Global.prefs.feature("theme_codes")) {
+            item {
+                SectionTitle("Theme codes (share with friends)")
+                RowCard("Paste a code", "bg=12101A;keys=1C1830;text=F1EEFF;accent=8B5CF6…", onTap = { })
+                var code by remember { mutableStateOf("") }
+                OutlinedTextField(
+                    value = code, onValueChange = { code = it },
+                    placeholder = { Text("paste theme code", color = TextHint) },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Accent, unfocusedBorderColor = CardSpecial,
+                        focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+                        cursorColor = Accent
+                    ),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                    textStyle = LocalTextStyle.current.copy(fontSize = 12.sp)
+                )
+                RowCard("Apply code", null, onTap = {
+                    if (Global.themes.addCode(code)) toast(ctx, "Theme applied ✓") else toast(ctx, "Invalid code")
+                })
+            }
         }
-        item {
-            // theme editor (#57): accent + corner radius, saved as a custom theme
-            SectionTitle("Theme editor")
-            RowCard("Accent color", "tap to cycle 8 curated accents", onTap = {
-                val accents = listOf(0xFF8B5CF6.toInt(), 0xFF34D399.toInt(), 0xFF38BDF8.toInt(),
-                    0xFFF472B6.toInt(), 0xFFF59E0B.toInt(), 0xFFE11D48.toInt(),
-                    0xFF22C55E.toInt(), 0xFF6366F1.toInt())
-                val base = ThemeEngine.byId(prefs.themeId)
-                val next = accents[(accents.indexOf(base.accent) + 1).mod(accents.size)]
-                Global.themes.saveCustom(base.copy(id = "custom_editor", accent = next))
-                toast(ctx, "Accent updated ✓")
-            })
-            RowCard("Corner radius", "cycles 10 → 26 dp", onTap = {
-                val base = ThemeEngine.byId(prefs.themeId)
-                val next = ((base.radiusDp - 10 + 4) % 17) + 10
-                Global.themes.saveCustom(base.copy(id = "custom_editor", radiusDp = next))
-                toast(ctx, "Radius ${next}dp ✓")
-            })
+        if (Global.prefs.feature("theme_editor")) {
+            item {
+                // theme editor (#65): accent + corner radius, saved as a custom theme
+                SectionTitle("Theme editor")
+                RowCard("Accent color", "tap to cycle 8 curated accents", onTap = {
+                    val accents = listOf(0xFF8B5CF6.toInt(), 0xFF34D399.toInt(), 0xFF38BDF8.toInt(),
+                        0xFFF472B6.toInt(), 0xFFF59E0B.toInt(), 0xFFE11D48.toInt(),
+                        0xFF22C55E.toInt(), 0xFF6366F1.toInt())
+                    val base = ThemeEngine.byId(prefs.themeId)
+                    val next = accents[(accents.indexOf(base.accent) + 1).mod(accents.size)]
+                    Global.themes.saveCustom(base.copy(id = "custom_editor", accent = next))
+                    toast(ctx, "Accent updated ✓")
+                })
+                RowCard("Corner radius", "cycles 10 → 26 dp", onTap = {
+                    val base = ThemeEngine.byId(prefs.themeId)
+                    val next = ((base.radiusDp - 10 + 4) % 17) + 10
+                    Global.themes.saveCustom(base.copy(id = "custom_editor", radiusDp = next))
+                    toast(ctx, "Radius ${next}dp ✓")
+                })
+            }
         }
-        item {
-            // Google Fonts catalog (#27): OFL fonts, direct download
-            SectionTitle("Google Fonts catalog (download)")
-        }
-        items(FontCatalog.FONTS) { (id, label) ->
-            RowCard(
-                label,
-                if (busyFont == label) "downloading…" else "OFL · tap to download & apply",
-                onTap = {
-                    if (busyFont.isEmpty()) {
-                        busyFont = label
-                        scope.launch {
-                            val ok = Global.fonts.download(id, label).getOrDefault(false)
-                            busyFont = ""
-                            if (ok) {
-                                prefs.fontId = id
-                                fontId.value = id
-                                fonts.value = Global.fonts.all()
-                                toast(ctx, "$label installed ✓")
-                            } else toast(ctx, "Download failed — check network")
+        if (Global.prefs.feature("google_fonts")) {
+            item {
+                // Google Fonts catalog (#67): OFL fonts, direct download
+                SectionTitle("Google Fonts catalog (download)")
+            }
+            items(FontCatalog.FONTS) { (id, label) ->
+                RowCard(
+                    label,
+                    if (busyFont == label) "downloading…" else "OFL · tap to download & apply",
+                    onTap = {
+                        if (busyFont.isEmpty()) {
+                            busyFont = label
+                            scope.launch {
+                                val ok = Global.fonts.download(id, label).getOrDefault(false)
+                                busyFont = ""
+                                if (ok) {
+                                    prefs.fontId = id
+                                    fontId.value = id
+                                    fonts.value = Global.fonts.all()
+                                    toast(ctx, "$label installed ✓")
+                                } else toast(ctx, "Download failed — check network")
+                            }
                         }
                     }
-                }
-            )
+                )
+            }
         }
-        item { SectionTitle("Font") }
-        items(fonts.value) { (id, label) ->
-            RowCard(label, if (fontId.value == id) "✓ in use" else null, onTap = {
-                fontId.value = id; prefs.fontId = id
-            })
+        if (Global.prefs.feature("fonts")) {
+            item { SectionTitle("Font") }
+            items(fonts.value) { (id, label) ->
+                RowCard(label, if (fontId.value == id) "✓ in use" else null, onTap = {
+                    fontId.value = id; prefs.fontId = id
+                })
+            }
         }
-        item {
-            RowCard("Import .ttf / .otf", "Any font file from storage", onTap = {
-                fontPicker.launch(arrayOf("font/*", "application/octet-stream"))
-            })
+        if (Global.prefs.feature("font_import")) {
+            item {
+                RowCard("Import .ttf / .otf", "Any font file from storage", onTap = {
+                    fontPicker.launch(arrayOf("font/*", "application/octet-stream"))
+                })
+            }
         }
         item {
             SectionTitle("Keyboard size")
@@ -559,9 +575,27 @@ private fun LookScreen() {
             RowCard("One-handed mode", "current: ${prefs.oneHanded}", onTap = {
                 prefs.oneHanded = when (prefs.oneHanded) { "off" -> "right"; "right" -> "left"; else -> "off" }
             })
-            RowCard("Background image", if (bgPath.value.isEmpty()) "none" else "set ✓", onTap = {
-                bgPicker.launch(arrayOf("image/*"))
-            })
+            if (Global.prefs.feature("photo_keyboard")) {
+                RowCard("Background image", if (bgPath.value.isEmpty()) "none" else "set ✓", onTap = {
+                    bgPicker.launch(arrayOf("image/*"))
+                })
+            }
+            if (Global.prefs.feature("blur_dim")) {
+                RowCard("Background blur", "${Global.prefs.bgBlur.toInt()} / 16", trailing = {
+                    Slider(
+                        value = Global.prefs.bgBlur, onValueChange = { Global.prefs.bgBlur = it },
+                        valueRange = 0f..16f, colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
+                        modifier = Modifier.width(160.dp)
+                    )
+                })
+                RowCard("Background dim", "${(Global.prefs.bgDim * 100).toInt()}%", trailing = {
+                    Slider(
+                        value = Global.prefs.bgDim, onValueChange = { Global.prefs.bgDim = it },
+                        valueRange = 0f..0.9f, colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent),
+                        modifier = Modifier.width(160.dp)
+                    )
+                })
+            }
         }
     }
 }
@@ -578,20 +612,8 @@ private fun FeaturesScreen() {
                 var checked by remember { mutableStateOf(Global.prefs.feature(f.id, f.default)) }
                 SwitchPref(f.name, f.desc, checked) {
                     checked = it
+                    // central setter (Prefs.setFeature) syncs the typed accessors
                     Global.prefs.setFeature(f.id, it)
-                    // keep the typed accessors in sync so toggles really work
-                    when (f.id) {
-                        "glide" -> Global.prefs.glideEnabled = it
-                        "suggestions" -> Global.prefs.suggestionsEnabled = it
-                        "autocorrect" -> Global.prefs.autoCorrect = it
-                        "caps" -> Global.prefs.autoCaps = it
-                        "number_row" -> Global.prefs.numberRow = it
-                        "haptics_f" -> Global.prefs.haptics = it
-                        "key_sound" -> Global.prefs.keySound = it
-                        "one_handed" -> Global.prefs.oneHanded = if (it) "right" else "off"
-                        "clipboard_history" -> Global.prefs.clipboardHistoryEnabled = it
-                        "elder_mode" -> Global.prefs.elderMode = it
-                    }
                 }
             }
         }
@@ -635,47 +657,51 @@ private fun AdvancedScreen() {
     }
 
     LazyColumn(Modifier.fillMaxSize()) {
-        item {
-            SectionTitle("Style DNA — how the AI writes like you")
-            DnaSlider("Formality", dna.value.formality) {
-                dna.value = dna.value.copy(formality = it)
-                prefs.writeStyleDna(dna.value)
-            }
-            DnaSlider("Energy", dna.value.energy) {
-                dna.value = dna.value.copy(energy = it)
-                prefs.writeStyleDna(dna.value)
-            }
-            DnaSlider("Brevity", dna.value.brevity) {
-                dna.value = dna.value.copy(brevity = it)
-                prefs.writeStyleDna(dna.value)
-            }
-        }
-        item { SectionTitle("Macros — /shortcut → full text") }
-        items(macros.value.entries.toList()) { (k, v) ->
-            RowCard(k, v.take(60), trailing = {
-                Text("delete", color = Accent2, fontSize = 12.sp)
-            }, onTap = {
-                macros.value = macros.value.toMutableMap().apply { remove(k) }
-                prefs.writeMacros(macros.value)
-            })
-        }
-        item {
-            RowCard("New macro", "trigger without /, e.g. 'addr'", onTap = { })
-            OutlinedTextField(value = macroKey, onValueChange = { macroKey = it },
-                placeholder = { Text("trigger", color = TextHint) },
-                colors = outlined(), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
-                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp))
-            OutlinedTextField(value = macroVal, onValueChange = { macroVal = it },
-                placeholder = { Text("expansion", color = TextHint) },
-                colors = outlined(), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
-                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp))
-            RowCard("Save macro", null, onTap = {
-                if (macroKey.isNotBlank() && macroVal.isNotBlank()) {
-                    macros.value = macros.value.toMutableMap().apply { put(macroKey, macroVal) }
-                    prefs.writeMacros(macros.value)
-                    macroKey = ""; macroVal = ""
+        if (Global.prefs.feature("style_dna")) {
+            item {
+                SectionTitle("Style DNA — how the AI writes like you")
+                DnaSlider("Formality", dna.value.formality) {
+                    dna.value = dna.value.copy(formality = it)
+                    prefs.writeStyleDna(dna.value)
                 }
-            })
+                DnaSlider("Energy", dna.value.energy) {
+                    dna.value = dna.value.copy(energy = it)
+                    prefs.writeStyleDna(dna.value)
+                }
+                DnaSlider("Brevity", dna.value.brevity) {
+                    dna.value = dna.value.copy(brevity = it)
+                    prefs.writeStyleDna(dna.value)
+                }
+            }
+        }
+        if (Global.prefs.feature("macros")) {
+            item { SectionTitle("Macros — /shortcut → full text") }
+            items(macros.value.entries.toList()) { (k, v) ->
+                RowCard(k, v.take(60), trailing = {
+                    Text("delete", color = Accent2, fontSize = 12.sp)
+                }, onTap = {
+                    macros.value = macros.value.toMutableMap().apply { remove(k) }
+                    prefs.writeMacros(macros.value)
+                })
+            }
+            item {
+                RowCard("New macro", "trigger without /, e.g. 'addr'", onTap = { })
+                OutlinedTextField(value = macroKey, onValueChange = { macroKey = it },
+                    placeholder = { Text("trigger", color = TextHint) },
+                    colors = outlined(), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+                    textStyle = LocalTextStyle.current.copy(fontSize = 13.sp))
+                OutlinedTextField(value = macroVal, onValueChange = { macroVal = it },
+                    placeholder = { Text("expansion", color = TextHint) },
+                    colors = outlined(), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+                    textStyle = LocalTextStyle.current.copy(fontSize = 13.sp))
+                RowCard("Save macro", null, onTap = {
+                    if (macroKey.isNotBlank() && macroVal.isNotBlank()) {
+                        macros.value = macros.value.toMutableMap().apply { put(macroKey, macroVal) }
+                        prefs.writeMacros(macros.value)
+                        macroKey = ""; macroVal = ""
+                    }
+                })
+            }
         }
         item {
             SectionTitle("Privacy")
@@ -690,7 +716,7 @@ private fun AdvancedScreen() {
             })
         }
         item {
-            // my facts (#17): powers Field Genius chips + {{name}} templates
+            // my facts (#17): powers Field Genius chips + {{}} templates
             SectionTitle("My facts — form auto-fill & templates")
             var fName by remember { mutableStateOf(prefs.facts()["name"] ?: "") }
             var fEmail by remember { mutableStateOf(prefs.facts()["email"] ?: "") }
