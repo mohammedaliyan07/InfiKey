@@ -121,7 +121,7 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
         if (replacement.isNotEmpty()) ic?.commitText(replacement, 1)
     }
 
-    /** Smart backspace: kill composing char first, else delete word with accents kept. */
+    /** Smart backspace: kill composing char first, else delete one grapheme cluster. */
     fun backspace() {
         val conn = ic ?: return
         if (composing.isNotEmpty()) {
@@ -129,15 +129,12 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
             conn.setComposingText(composing.toString(), 1)
             return
         }
-        val before = conn.getTextBeforeCursor(2, 0) ?: ""
+        val before = conn.getTextBeforeCursor(12, 0) ?: ""
         if (before.isEmpty()) return
-        // swallow surrogate pairs (emoji) as one unit
-        val last = before.last()
-        if (Character.isLowSurrogate(last)) {
-            conn.deleteSurroundingText(2, 0)
-        } else {
-            conn.deleteSurroundingText(1, 0)
-        }
+        // safe grapheme delete (#19): emoji / Indic clusters stay whole when on
+        val n = if (prefs.feature("cursor_cluster")) SmartText.clusterLen(before)
+        else if (Character.isLowSurrogate(before.last())) 2 else 1
+        conn.deleteSurroundingText(n.coerceAtMost(before.length), 0)
     }
 
     fun deleteWord() {
