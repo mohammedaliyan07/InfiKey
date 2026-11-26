@@ -13,6 +13,7 @@ import com.infikey.ai.AiPrompts
 import com.infikey.ai.AiRouter
 import com.infikey.ai.GenOptions
 import com.infikey.ai.RewriteStyles
+import com.infikey.ime.UnicodeStyles
 import com.infikey.theme.ThemeEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,6 +56,7 @@ class AiPanel(context: Context) : LinearLayout(context) {
 
     private var selectedTone = "natural"
     private var lastResult = ""
+    private var outStyle = 0  // Unicode text style (feature 69)
 
     init {
         orientation = VERTICAL
@@ -99,8 +101,17 @@ class AiPanel(context: Context) : LinearLayout(context) {
         footer.addView(button("⧉ Copy") {
             copyToClipboard(lastResult); toast("Copied")
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        if (prefs.feature("unicode_styles")) {
+            footer.addView(button("Aa") {
+                outStyle = (outStyle + 1) % UnicodeStyles.COUNT
+                toast("Text style: " + UnicodeStyles.name(outStyle))
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        }
         footer.addView(button("⌨ Type it", accent = true) {
-            if (lastResult.isNotBlank()) callbacks?.commitText(lastResult)
+            if (lastResult.isNotBlank()) {
+                val styled = if (outStyle == 0) lastResult else UnicodeStyles.transform(lastResult, outStyle)
+                callbacks?.commitText(styled)
+            }
             close()
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f))
         addView(footer)
