@@ -5,6 +5,8 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.util.Log
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
  * Font system: system faces out of the box + user-imported TTF/OTF

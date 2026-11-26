@@ -160,7 +160,8 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
     fun listContinuation(): String? {
         val conn = ic ?: return null
         val before = conn.getTextBeforeCursor(200, 0) ?: return null
-        val line = before.substringAfterLast('\n')
+        val nl = before.lastIndexOf('\n')
+        val line = if (nl >= 0) before.substring(nl + 1) else before
         val numbered = Regex("^(\\s*)(\\d+)[.)]\\s+").find(line)
         return when {
             numbered != null ->

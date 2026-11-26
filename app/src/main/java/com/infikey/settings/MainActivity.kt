@@ -430,6 +430,7 @@ private fun LookScreen() {
     val ctx = LocalContext.current
     val prefs = Global.prefs
     val scope = rememberCoroutineScope()
+    var busyFont by remember { mutableStateOf("") }
     val themes = remember { mutableStateOf(ThemeEngine.byId(prefs.themeId).id) }
     val fontId = remember { mutableStateOf(prefs.fontId) }
     val fonts = remember { mutableStateOf(Global.fonts.all()) }
@@ -511,25 +512,27 @@ private fun LookScreen() {
         item {
             // Google Fonts catalog (#27): OFL fonts, direct download
             SectionTitle("Google Fonts catalog (download)")
-            var busyFont by remember { mutableStateOf("") }
-            if (busyFont.isNotEmpty()) {
-                RowCard("Downloading $busyFont…", "a few seconds", onTap = { })
-            }
-            items(FontCatalog.FONTS) { (id, label) ->
-                RowCard(label, "OFL · tap to download & apply", onTap = {
-                    busyFont = label
-                    scope.launch {
-                        val ok = Global.fonts.download(id, label).getOrDefault(false)
-                        busyFont = ""
-                        if (ok) {
-                            prefs.fontId = id
-                            fontId.value = id
-                            fonts.value = Global.fonts.all()
-                            toast(ctx, "$label installed ✓")
-                        } else toast(ctx, "Download failed — check network")
+        }
+        items(FontCatalog.FONTS) { (id, label) ->
+            RowCard(
+                label,
+                if (busyFont == label) "downloading…" else "OFL · tap to download & apply",
+                onTap = {
+                    if (busyFont.isEmpty()) {
+                        busyFont = label
+                        scope.launch {
+                            val ok = Global.fonts.download(id, label).getOrDefault(false)
+                            busyFont = ""
+                            if (ok) {
+                                prefs.fontId = id
+                                fontId.value = id
+                                fonts.value = Global.fonts.all()
+                                toast(ctx, "$label installed ✓")
+                            } else toast(ctx, "Download failed — check network")
+                        }
                     }
-                })
-            }
+                }
+            )
         }
         item { SectionTitle("Font") }
         items(fonts.value) { (id, label) ->

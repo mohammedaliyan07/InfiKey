@@ -474,7 +474,7 @@ class KeyboardView(context: Context) : View(context) {
         // sound packs (#59)
         val fx = when (prefs.soundPack) {
             "silent" -> return
-            "mechanical" -> android.media.AudioManager.FX_KEYCLICK
+            "mechanical" -> android.media.AudioManager.FX_KEY_CLICK
             "typewriter" -> android.media.AudioManager.FX_KEYPRESS_DELETE
             "pop" -> android.media.AudioManager.FX_KEYPRESS_SPACEBAR
             else -> android.media.AudioManager.FX_KEYPRESS_STANDARD
