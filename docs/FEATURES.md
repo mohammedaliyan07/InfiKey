@@ -6,8 +6,28 @@ repository (the registry lives in
 and every toggleable one can be switched on/off from **InfiKey Settings → Features**.
 Features marked *off* by default are opt-in so the first-run keyboard stays clean.
 
-> **Changelog — this build (37d789b):** every feature below is now wired to real
-> behavior, not just a toggle. Newly implemented in this build: number row,
+> **Changelog — this build (toggle wiring):** all 85 registry toggles in
+> Settings → Features now control real behavior. `Prefs.feature()` is a central
+> resolver (toggle ↔ dedicated screen stay in sync) and `Prefs.setFeature()`
+> writes the canonical accessor. Newly wired/implemented in this build:
+> long-press popups, cursor drag on spacebar, spacebar trackpad fine mode,
+> swipe-up-on-space → language switch, selection mode (hold shift + slide),
+> caps-lock double-tap, swipe-to-delete wipe, number pad on numeric fields,
+> safe grapheme delete (ZWJ emoji + Indic matra/virama chains delete whole),
+> Dev/Markdown/script toggles gate the layout switcher, system-clipboard
+> listener feeds clipboard history (recording honors its toggle), pin / clean /
+> translate / edit / ask-AI clipboard actions gated, AI panel chips gated
+> (rewrite, fix, continue, reply ×3, TL;DR, translate, festival), AI typing +
+> read-aloud + per-app tone + Style DNA honored, offline mode forces on-device,
+> cloud-off hides endpoints, router-off forces the fast engine, any-GGUF import
+> gating, neumorphic rendering, photo keyboard + blur/dim sliders (sliders are
+> new), Google Fonts catalog / font list / .ttf import / theme codes / theme
+> editor / built-in themes sections gated, auto-emoji on sentence end,
+> Indian greetings chips, date chips, macros, text→emoji, lakh/Indic numerals,
+> Indic font pack (system Noto for Indic layouts), accessibility contrast.
+>
+> **Changelog — previous build (37d789b):** every feature below was implemented
+> as real behavior. In that build: number row,
 > auto-capitalisation, undo chip + history stack, numbered-list continuation,
 > glide trail, spacebar trackpad slide, incognito enforcement on password/phone
 > fields + safe-app list, smart chips (inline calculator, lakh/crore grouping,
