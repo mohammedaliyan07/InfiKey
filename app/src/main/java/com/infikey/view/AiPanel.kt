@@ -113,9 +113,11 @@ class AiPanel(context: Context) : LinearLayout(context) {
             }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         }
         footer.addView(button("⌨ Type it", accent = true) {
-            if (lastResult.isNotBlank()) {
+            if (lastResult.isNotBlank() && !prefs.feature("ai_type")) {
+                toast("AI typing is off — Settings → Features")
+            } else if (lastResult.isNotBlank()) {
                 val styled = if (outStyle == 0) lastResult else UnicodeStyles.transform(lastResult, outStyle)
-                if (prefs.readAloudBeforeSend) speak(styled)  // read-back before send (#71)
+                if (prefs.feature("read_aloud")) speak(styled)  // read-back before send (#52)
                 callbacks?.commitText(styled)
             }
             close()
@@ -196,13 +198,13 @@ class AiPanel(context: Context) : LinearLayout(context) {
     private fun showActions() {
         clearDynamic()
         actionGrid.addView(chip("✍ Compose") { showCompose() })
-        actionGrid.addView(chip("↻ Rewrite") { runRewrite() })
-        actionGrid.addView(chip("✓ Fix") { runTask(AiPrompts.fix(fieldText())) })
-        actionGrid.addView(chip("… Continue") { runTask(AiPrompts.continueWriting(fieldText(), fieldHint())) })
-        actionGrid.addView(chip("💬 Reply ×3") { runReplyChips() })
-        actionGrid.addView(chip("TL;DR") { runTask(AiPrompts.tldr(fieldText())) })
-        actionGrid.addView(chip("🌐 Translate") { showTranslate() })
-        actionGrid.addView(chip("🎂 Festival") { showFestival() })
+        if (prefs.feature("rewrite")) actionGrid.addView(chip("↻ Rewrite") { runRewrite() })
+        if (prefs.feature("ai_fix")) actionGrid.addView(chip("✓ Fix") { runTask(AiPrompts.fix(fieldText())) })
+        if (prefs.feature("ai_continue")) actionGrid.addView(chip("… Continue") { runTask(AiPrompts.continueWriting(fieldText(), fieldHint())) })
+        if (prefs.feature("reply_chips")) actionGrid.addView(chip("💬 Reply ×3") { runReplyChips() })
+        if (prefs.feature("chat_tldr")) actionGrid.addView(chip("TL;DR") { runTask(AiPrompts.tldr(fieldText())) })
+        if (prefs.feature("ai_translate")) actionGrid.addView(chip("🌐 Translate") { showTranslate() })
+        if (prefs.feature("festival_gen")) actionGrid.addView(chip("🎂 Festival") { showFestival() })
         actionGrid.addView(chip("🎭 Tone check") {
             runTask(AiPrompts.toneCheck(fieldText()))
         })
@@ -219,8 +221,8 @@ class AiPanel(context: Context) : LinearLayout(context) {
         for (t in listOf("natural", "formal", "casual", "friendly", "genz")) {
             toneRow.addView(chip(t.replaceFirstChar { it.uppercase() }, accent = t == selectedTone) {
                 selectedTone = t
-                // per-app tone memory (#68): formal at work, casual in chats
-                callbacks?.appPackage()?.takeIf { it.isNotEmpty() }?.let {
+                // per-app tone memory (#56): formal at work, casual in chats
+                callbacks?.appPackage()?.takeIf { it.isNotEmpty() && prefs.feature("per_app_tone") }?.let {
                     Global.perApp.rememberTone(it, t)
                 }
                 showActions()
@@ -247,7 +249,12 @@ class AiPanel(context: Context) : LinearLayout(context) {
         actionGrid.addView(input, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         actionGrid.addView(chip("⚡ Generate", accent = true) {
             val what = input.text.toString().trim()
-            if (what.isNotBlank()) runTask(AiPrompts.compose(what, selectedTone, fieldHint(), prefs.readStyleDna()))
+            if (what.isNotBlank()) {
+                // Style DNA (#51) only shapes output while its toggle is on
+                val dna = if (prefs.feature("style_dna")) prefs.readStyleDna()
+                    else com.infikey.ai.StyleDna.DEFAULT
+                runTask(AiPrompts.compose(what, selectedTone, fieldHint(), dna))
+            }
         })
         actionGrid.addView(chip("← Back") { showActions() })
     }
@@ -377,9 +384,9 @@ class AiPanel(context: Context) : LinearLayout(context) {
 
     fun open() {
         visibility = VISIBLE
-        // per-app tone recall (#68)
+        // per-app tone recall (#56)
         val pkg = callbacks?.appPackage().orEmpty()
-        if (pkg.isNotEmpty()) {
+        if (pkg.isNotEmpty() && prefs.feature("per_app_tone")) {
             Global.perApp.get(pkg)?.tone?.takeIf { it.isNotEmpty() }?.let { selectedTone = it }
         }
         refreshStatus()
