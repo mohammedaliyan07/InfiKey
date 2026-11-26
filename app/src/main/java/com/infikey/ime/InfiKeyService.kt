@@ -57,13 +57,22 @@ class InfiKeyService : InputMethodService(),
     private var lastShiftTap = 0L
     private var lastSpaceTap = 0L
     private var fieldInfo: FieldGenius.FieldInfo? = null
+    private var showingNumpad = false
     private var speech: SpeechRecognizer? = null
+    private var clipListener: android.content.ClipboardManager.OnPrimaryClipChangedListener? = null
 
     // ---- lifecycle ----
 
     override fun onCreate() {
         super.onCreate()
         inputLogic = InputLogic(Global.prefs, Global.suggestions)
+        // clipboard history (#73): watch the system clipboard while InfiKey runs
+        val cm = getSystemService(android.content.ClipboardManager::class.java)
+        clipListener = android.content.ClipboardManager.OnPrimaryClipChangedListener {
+            if (prefs.feature("clipboard_history") && !inputLogic.incognito)
+                Global.clipboard.observe(cm?.primaryClip)
+        }
+        cm?.addPrimaryClipChangedListener(clipListener!!)
     }
 
     override fun onCreateInputView(): View {
@@ -121,6 +130,17 @@ class InfiKeyService : InputMethodService(),
             }
         }
         Global.suggestions.loadForLayout(prefs.activeLayoutId)
+
+        // dedicated number pad (#15): swap in the keypad for numeric fields
+        if (::keyboardView.isInitialized) {
+            val numeric = fieldInfo?.kind == FieldGenius.Kind.NUMBER ||
+                fieldInfo?.kind == FieldGenius.Kind.PHONE
+            if (numeric && prefs.feature("numpad") && !showingNumpad) {
+                applyLayout(com.infikey.layout.Layouts.NUMPAD, persist = false)
+            } else if ((!numeric || !prefs.feature("numpad")) && showingNumpad) {
+                applyLayout(prefs.activeLayoutId)
+            }
+        }
         updateSuggestions()
     }
 
@@ -133,13 +153,14 @@ class InfiKeyService : InputMethodService(),
 
     // ---- layout handling ----
 
-    private fun applyLayout(id: String) {
+    private fun applyLayout(id: String, persist: Boolean = true) {
         mode = MODE_LETTERS
         val layout = Layouts.byId(id)
         keyboardView.setLayout(layout)
         keyboardView.setCapsState(shiftOn, capsLocked)
         keyboardView.setOneHanded(prefs.oneHanded)
-        prefs.activeLayoutId = id
+        showingNumpad = id == com.infikey.layout.Layouts.NUMPAD
+        if (persist) prefs.activeLayoutId = id
         Global.suggestions.loadForLayout(id)
     }
 
@@ -180,6 +201,11 @@ class InfiKeyService : InputMethodService(),
                 updateSuggestions()
             }
             KeyAction.ENTER -> {
+                // auto-emoji (#79): a fitting emoji lands at the end of the sentence
+                if (prefs.feature("auto_emoji") && !inputLogic.incognito) {
+                    val before = currentInputConnection?.getTextBeforeCursor(80, 0)?.toString().orEmpty()
+                    SmartText.autoEmoji(before)?.let { inputLogic.commitString(it) }
+                }
                 val marker = inputLogic.listContinuation()
                 inputLogic.commitCurrentWord("\n")
                 if (marker != null) inputLogic.commitString(marker)
@@ -195,7 +221,10 @@ class InfiKeyService : InputMethodService(),
             KeyAction.GLOBE -> cycleLayout()
             KeyAction.EMOJI -> togglePanel(emojiPanel)
             KeyAction.CLIPBOARD -> { clipboardPanel.rebuild(); togglePanel(clipboardPanel) }
-            KeyAction.AI -> if (aiPanel.isOpen()) aiPanel.close() else { closePanels(); aiPanel.open() }
+            // AI chat panel (#42): the whole overlay honours its feature toggle
+            KeyAction.AI -> if (prefs.feature("ai_chat")) {
+                if (aiPanel.isOpen()) aiPanel.close() else { closePanels(); aiPanel.open() }
+            }
             KeyAction.SETTINGS -> openSettings()
             KeyAction.VOICE -> startVoice()
             KeyAction.NONE -> when (output) {
@@ -230,13 +259,14 @@ class InfiKeyService : InputMethodService(),
 
     private fun handleShift() {
         val now = System.currentTimeMillis()
-        if (now - lastShiftTap < 350) {
+        if (now - lastShiftTap < 350 && prefs.feature("caps_lock")) {
             capsLocked = !capsLocked
             shiftOn = capsLocked
         } else {
             shiftOn = !shiftOn
             if (capsLocked && !shiftOn) capsLocked = false
         }
+        if (!shiftOn) selAnchor = -1
         lastShiftTap = now
         keyboardView.setCapsState(shiftOn, capsLocked)
     }
@@ -252,7 +282,7 @@ class InfiKeyService : InputMethodService(),
             return
         }
         lastSpaceTap = now
-        if (inputLogic.tryMacro()) return
+        if (prefs.feature("macros") && inputLogic.tryMacro()) return
         inputLogic.commitCurrentWord(" ")
         updateSuggestions()
     }
@@ -267,7 +297,9 @@ class InfiKeyService : InputMethodService(),
     }
 
     private fun cycleLayout() {
-        val enabled = prefs.enabledLayouts().filter { Layouts.ALL.any { l -> l.id == it } }
+        // language toggles (#25–#36, #16, #17) decide which scripts appear
+        val enabled = prefs.enabledLayouts()
+            .filter { Layouts.ALL.any { l -> l.id == it } && prefs.layoutEnabled(it) }
             .ifEmpty { listOf(prefs.activeLayoutId) }
         val idx = enabled.indexOf(prefs.activeLayoutId)
         val next = enabled[(idx + 1).mod(enabled.size)]
@@ -278,6 +310,7 @@ class InfiKeyService : InputMethodService(),
     }
 
     private var cursorPos = 0
+    private var selAnchor = -1
 
     override fun onUpdateSelection(
         oldSelStart: Int, oldSelEnd: Int,
@@ -292,7 +325,14 @@ class InfiKeyService : InputMethodService(),
     private fun sendCursor(dir: Int) {
         val ic = currentInputConnection ?: return
         val target = (cursorPos + dir).coerceAtLeast(0)
-        ic.setSelection(target, target)
+        // selection mode (#14): hold shift and slide to extend a selection
+        if (prefs.feature("selection_mode") && shiftOn) {
+            if (selAnchor < 0) selAnchor = cursorPos
+            ic.setSelection(minOf(selAnchor, target), maxOf(selAnchor, target))
+        } else {
+            selAnchor = -1
+            ic.setSelection(target, target)
+        }
         cursorPos = target
     }
 
@@ -339,7 +379,7 @@ class InfiKeyService : InputMethodService(),
             }
             label.startsWith("⇄") -> {
                 val id = chip.second
-                if (id != null && Layouts.ALL.any { it.id == id }) {
+                if (id != null && Layouts.ALL.any { it.id == id } && prefs.layoutEnabled(id)) {
                     applyLayout(id)
                     android.widget.Toast.makeText(this, Layouts.byId(id).name, android.widget.Toast.LENGTH_SHORT).show()
                 }
@@ -351,7 +391,7 @@ class InfiKeyService : InputMethodService(),
 
     override fun onShape(shape: String) {
         when (shape) {
-            "caret" -> { closePanels(); aiPanel.open() }
+            "caret" -> if (prefs.feature("ai_chat")) { closePanels(); aiPanel.open() }
             "circle" -> {
                 val ic = currentInputConnection ?: return
                 val all = ic.getExtractedText(ExtractedTextRequest(), 0)?.text?.toString() ?: return
@@ -367,15 +407,23 @@ class InfiKeyService : InputMethodService(),
         val protected = inputLogic.incognito
         if (!protected) {
             if (word.length >= 3) SmartText.calc(word)?.let { chips.add("= $it" to it) }
-            if (word.length in 4..12 && word.matches(Regex("\\d+"))) {
-                SmartText.lakh(word).let { chips.add("₹ $it" to it) }
+            // Indic number formatting (#39): lakh/crore grouping + native numerals
+            if (prefs.feature("indic_digits")) {
+                if (word.length in 4..12 && word.matches(Regex("\\d+"))) {
+                    SmartText.lakh(word).let { chips.add("₹ $it" to it) }
+                }
+                SmartText.indicDigits(word, prefs.activeLayoutId)?.let { chips.add("$word → $it" to it) }
             }
-            SmartText.indicDigits(word, prefs.activeLayoutId)?.let { chips.add("$word → $it" to it) }
-            SmartText.emojiFor(word)?.let { chips.add("$it emoji" to it) }
+            if (prefs.feature("text_to_emoji")) {
+                SmartText.emojiFor(word)?.let { chips.add("$it emoji" to it) }
+            }
             if (word.length >= 2 && word.any { it.isLetter() }) {
                 SmartText.caseCycle(word).let { chips.add("Aa $it" to it) }
             }
-            if (fieldInfo?.kind?.privacy == FieldGenius.Privacy.SUGGEST) {
+            // Field Genius chips (#49) + form auto-fill (#48): saved facts for this field type
+            if (prefs.feature("field_genius") && prefs.feature("form_fill") &&
+                fieldInfo?.kind?.privacy == FieldGenius.Privacy.SUGGEST
+            ) {
                 val key = when (fieldInfo?.kind) {
                     FieldGenius.Kind.EMAIL -> "email"
                     FieldGenius.Kind.NAME -> "name"
@@ -390,10 +438,16 @@ class InfiKeyService : InputMethodService(),
             chips.add("↺ undo" to null)
         }
         if (word.isEmpty() && !protected) {
-            SmartText.dateChips().take(1).forEach { (l, v) -> chips.add(l to "$v ") }
+            if (prefs.feature("date_chips")) {
+                SmartText.dateChips().take(1).forEach { (l, v) -> chips.add(l to "$v ") }
+            }
+            if (prefs.feature("greetings_pack")) {
+                SmartText.greetings().take(2).forEach { (l, v) -> chips.add(l to v) }
+            }
             val last = inputLogic.lastScriptHint
             if (last != null && last != prefs.activeLayoutId &&
-                Layouts.ALL.any { it.id == last } && !prefs.feature("translit", false)
+                Layouts.ALL.any { it.id == last } && prefs.layoutEnabled(last) &&
+                !prefs.feature("translit", false)
             ) chips.add("⇄ ${Layouts.byId(last).name}?" to last)
         }
         return chips
@@ -445,7 +499,7 @@ class InfiKeyService : InputMethodService(),
 
     override fun commitText(text: String) {
         inputLogic.commitString(text)
-        if (!inputLogic.incognito) Global.clipboard.observeText(text)
+        if (!inputLogic.incognito && prefs.feature("clipboard_history")) Global.clipboard.observeText(text)
     }
 
     override fun appPackage(): String =
@@ -507,6 +561,8 @@ class InfiKeyService : InputMethodService(),
 
     override fun onDestroy() {
         speech?.destroy()
+        getSystemService(android.content.ClipboardManager::class.java)
+            ?.removePrimaryClipChangedListener(clipListener)
         super.onDestroy()
     }
 
