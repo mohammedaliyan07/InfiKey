@@ -21,6 +21,27 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
     private var composing = StringBuilder()
     private var prevWord: String? = null
 
+    /** #12/#77 — nothing learned, predicted or stored while incognito. */
+    @Volatile
+    var incognito: Boolean = false
+
+    /** #45 — script of the last committed word (layout id or null). */
+    var lastScriptHint: String? = null
+
+    // #53 — undo history: recently deleted chunks, newest last
+    private val undoStack = ArrayDeque<String>()
+
+    fun undoAvailable(): Boolean = undoStack.isNotEmpty()
+
+    fun pushUndo(chunk: String) {
+        if (chunk.isNotBlank()) {
+            undoStack.addLast(chunk)
+            if (undoStack.size > 20) undoStack.removeFirst()
+        }
+    }
+
+    fun popUndo(): String? = undoStack.removeLastOrNull()
+
     /** Called by the service whenever the editor or cursor moves. */
     fun attach(connection: InputConnection?, keepComposing: Boolean = false) {
         ic = connection
@@ -43,7 +64,9 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
     }
 
     private fun commitToHistory(word: String) {
+        if (incognito) return
         val w = word.trim()
+        SmartText.scriptOf(w)?.let { lastScriptHint = it }
         if (w.isNotEmpty()) {
             suggestions.learn(w)
             prevWord?.let { suggestions.learnBigram(it, w) }
@@ -120,6 +143,7 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
     fun deleteWord() {
         val conn = ic ?: return
         if (composing.isNotEmpty()) {
+            pushUndo(composing.toString())
             composing.clear()
             conn.setComposingText("", 1)
             return
@@ -128,7 +152,22 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
         val trimmed = before.trimEnd()
         val cut = before.length - trimmed.length // trailing spaces to remove
         val wordLen = trimmed.length - (trimmed.lastIndexOfAny(charArrayOf(' ', '\n', '\t')) + 1)
+        if (wordLen > 0) pushUndo(trimmed.substring(trimmed.length - wordLen))
         conn.deleteSurroundingText(wordLen + cut, 0)
+    }
+
+    /** ENTER after "1. " or "- " continues the list automatically (#33). */
+    fun listContinuation(): String? {
+        val conn = ic ?: return null
+        val before = conn.getTextBeforeCursor(200, 0) ?: return null
+        val line = before.substringAfterLast('\n')
+        val numbered = Regex("^(\\s*)(\\d+)[.)]\\s+").find(line)
+        return when {
+            numbered != null ->
+                numbered.groupValues[1] + ((numbered.groupValues[2].toIntOrNull() ?: 0) + 1) + ". "
+            Regex("^\\s*[-*•]\\s+").containsMatchIn(line) -> "- "
+            else -> null
+        }
     }
 
     /** Accepts a suggestion, replacing the composing word. */
@@ -161,10 +200,19 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
     fun tryMacro(): Boolean {
         val raw = composing.toString()
         if (!raw.startsWith(MACRO_PREFIX) || raw.length < 2) return false
-        val macro = prefs.readMacros()[raw] ?: return false
+        val template = prefs.readMacros()[raw] ?: return false
+        // #47 — {{name}}/{{email}}/{{phone}}/{{address}}/{{date}}/{{time}} resolve
+        // from saved facts; unknown placeholders pass through untouched.
+        val expanded = template.replace(Regex("\\{\\{(\\w+)}}")) { m ->
+            when (m.groupValues[1].lowercase()) {
+                "date" -> java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.ENGLISH).format(java.util.Date())
+                "time" -> java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+                else -> prefs.facts()[m.groupValues[1].lowercase()] ?: m.value
+            }
+        }
         composing.clear()
         ic?.setComposingText("", 1)
-        ic?.commitText(macro, 1)
+        ic?.commitText(expanded, 1)
         return true
     }
 

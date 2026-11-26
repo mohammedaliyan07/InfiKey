@@ -40,6 +40,11 @@ class EmojiPanel(context: Context) : LinearLayout(context) {
             "Objects" to listOf(
                 "📱","💻","⌨️","🖥️","🖨️","🖱️","💾","📷","🎥","📞","🔋","🔌","💡","🔦","🕯️","🧯",
                 "📚","✏️","📝","📌","🔑","🔒","🔒","🧸","🎮","🎧","🎸","⚽","🏏","🥇","🎯","🎲"
+            ),
+            "Kaomoji" to listOf(
+                "(◕‿◕)","(｡◕‿◕｡)","ʕ•ᴥ•ʔ","(¬‿¬)","ᕕ( ᐛ )ᕗ","(╯°□°）╯︵ ┻━┻","(•̀ᴗ•́)و",
+                "(๑•̀ㅂ•́)و✧","(＾▽＾)","(─‿─)","(♡˙︶˙♡)","(っ˘ڡ˘ς)","(ง'̀-'́)ง","(•_•)","¯\\_(ツ)_/¯",
+                "→","←","↑","↓","★","☆","✦","✧","•","◦","‣","※","₹","©","®","™","°","±","×","÷","∞","≈","≠","√","†","‡","§","¶"
             )
         )
     }
@@ -51,7 +56,19 @@ class EmojiPanel(context: Context) : LinearLayout(context) {
     private val d = resources.displayMetrics.density
     private lateinit var grid: GridView
     private val tabs = mutableListOf<TextView>()
-    private var currentItems: List<String> = CATEGORIES.values.first()
+
+    /** Recent tab first (#31) — recents from prefs, then all categories. */
+    private fun tabNames(): List<String> {
+        val recents = com.infikey.Global.prefs.emojiRecents()
+        return (if (recents.isNotEmpty()) listOf("Recent") else emptyList()) + CATEGORIES.keys
+    }
+
+    private fun itemsFor(index: Int): List<String> {
+        val recents = com.infikey.Global.prefs.emojiRecents()
+        val offset = if (recents.isNotEmpty()) 1 else 0
+        return if (index == 0 && recents.isNotEmpty()) recents
+        else CATEGORIES.values.toList()[index - offset]
+    }
 
     init {
         orientation = VERTICAL
@@ -59,7 +76,7 @@ class EmojiPanel(context: Context) : LinearLayout(context) {
         setPadding((6 * d).toInt(), (6 * d).toInt(), (6 * d).toInt(), (6 * d).toInt())
 
         val tabRow = LinearLayout(context).apply { orientation = HORIZONTAL }
-        CATEGORIES.keys.forEachIndexed { i, name ->
+        tabNames().forEachIndexed { i, name ->
             val tab = TextView(context).apply {
                 text = name
                 textSize = 12f
@@ -85,7 +102,7 @@ class EmojiPanel(context: Context) : LinearLayout(context) {
     }
 
     private fun selectTab(index: Int) {
-        currentItems = CATEGORIES.values.toList()[index]
+        val currentItems = itemsFor(index)
         tabs.forEachIndexed { i, t -> t.setTextColor(if (i == index) theme.accent else theme.hint) }
         grid.adapter = object : android.widget.BaseAdapter() {
             override fun getCount() = currentItems.size

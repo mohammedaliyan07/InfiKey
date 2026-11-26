@@ -8,6 +8,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.ExtractedTextRequest
 import android.widget.LinearLayout
 import com.infikey.Global
 import com.infikey.feature.FieldGenius
@@ -104,6 +105,11 @@ class InfiKeyService : InputMethodService(),
             attribute, pkg,
             FieldGenius.labelFromExtras(attribute?.extras)
         )
+        // incognito: password/phone fields + safe apps learn & store nothing (#12, #77)
+        val protectedField = fieldInfo?.kind?.privacy == FieldGenius.Privacy.BLOCKED ||
+            (pkg.isNotEmpty() && pkg in prefs.safeApps)
+        inputLogic.incognito = protectedField
+
         // per-app memory: restore language automatically
         if (prefs.perAppAuto && pkg.isNotEmpty()) {
             Global.perApp.get(pkg)?.let { mem ->
@@ -174,7 +180,9 @@ class InfiKeyService : InputMethodService(),
                 updateSuggestions()
             }
             KeyAction.ENTER -> {
+                val marker = inputLogic.listContinuation()
                 inputLogic.commitCurrentWord("\n")
+                if (marker != null) inputLogic.commitString(marker)
                 updateSuggestions()
             }
             KeyAction.SPACE -> handleSpace()
@@ -207,7 +215,14 @@ class InfiKeyService : InputMethodService(),
         when (output) {
             "globe" -> cycleLayout()
             else -> {
-                inputLogic.appendLetter(output)
+                var out = output
+                // smart shift: auto-capitalise sentence starts (#5)
+                if (prefs.autoCaps && out.length == 1 && out[0].isLowerCase() &&
+                    inputLogic.shouldAutoCap() && !shiftOn && !capsLocked
+                ) {
+                    out = out.uppercase()
+                }
+                inputLogic.appendLetter(out)
                 updateSuggestions()
             }
         }
@@ -306,6 +321,82 @@ class InfiKeyService : InputMethodService(),
         val word = inputLogic.composingText()
         val list = Global.suggestions.suggest(word, inputLogic.previousWord(), 3)
         suggestionBar.showSuggestions(list)
+        contextChips = buildContextChips(word)
+        suggestionBar.showContextChip(contextChips.firstOrNull()?.first)
+    }
+
+    private var contextChips: List<Pair<String, String?>> = emptyList()
+
+    override fun onContextChip(label: String) {
+        val chip = contextChips.firstOrNull { it.first == label } ?: return
+        when {
+            label.startsWith("↺") -> {
+                val chunk = inputLogic.popUndo()
+                if (chunk != null) {
+                    inputLogic.commitString(chunk)
+                    android.widget.Toast.makeText(this, "Restored: $chunk", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+            label.startsWith("⇄") -> {
+                val id = chip.second
+                if (id != null && Layouts.ALL.any { it.id == id }) {
+                    applyLayout(id)
+                    android.widget.Toast.makeText(this, Layouts.byId(id).name, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+            else -> chip.second?.let { inputLogic.commitString(it) }
+        }
+        updateSuggestions()
+    }
+
+    override fun onShape(shape: String) {
+        when (shape) {
+            "caret" -> { closePanels(); aiPanel.open() }
+            "circle" -> {
+                val ic = currentInputConnection ?: return
+                val all = ic.getExtractedText(ExtractedTextRequest(), 0)?.text?.toString() ?: return
+                ic.setSelection(0, all.length)
+            }
+        }
+    }
+
+    /** Smart chip: calculator, lakh grouping, Indic digits, case cycle,
+     *  emoji-from-text, Field Genius autofill, undo, dates, script switch. */
+    private fun buildContextChips(word: String): List<Pair<String, String?>> {
+        val chips = mutableListOf<Pair<String, String?>>()
+        val protected = inputLogic.incognito
+        if (!protected) {
+            if (word.length >= 3) SmartText.calc(word)?.let { chips.add("= $it" to it) }
+            if (word.length in 4..12 && word.matches(Regex("\\d+"))) {
+                SmartText.lakh(word).let { chips.add("₹ $it" to it) }
+            }
+            SmartText.indicDigits(word, prefs.activeLayoutId)?.let { chips.add("$word → $it" to it) }
+            SmartText.emojiFor(word)?.let { chips.add("$it emoji" to it) }
+            if (word.length >= 2 && word.any { it.isLetter() }) {
+                SmartText.caseCycle(word).let { chips.add("Aa $it" to it) }
+            }
+            if (fieldInfo?.kind?.privacy == FieldGenius.Privacy.SUGGEST) {
+                val key = when (fieldInfo?.kind) {
+                    FieldGenius.Kind.EMAIL -> "email"
+                    FieldGenius.Kind.NAME -> "name"
+                    else -> ""
+                }
+                if (key.isNotEmpty()) prefs.facts()[key]?.takeIf { it.isNotBlank() }?.let {
+                    chips.add("⚡ $it" to it)
+                }
+            }
+        }
+        if (prefs.feature("undo_stack") && inputLogic.undoAvailable() && word.isEmpty()) {
+            chips.add("↺ undo" to null)
+        }
+        if (word.isEmpty() && !protected) {
+            SmartText.dateChips().take(1).forEach { (l, v) -> chips.add(l to "$v ") }
+            val last = inputLogic.lastScriptHint
+            if (last != null && last != prefs.activeLayoutId &&
+                Layouts.ALL.any { it.id == last } && !prefs.feature("translit", false)
+            ) chips.add("⇄ ${Layouts.byId(last).name}?" to last)
+        }
+        return chips
     }
 
     override fun onSuggestion(word: String) {
@@ -326,6 +417,7 @@ class InfiKeyService : InputMethodService(),
     override fun onSettingsTap() = openSettings()
 
     override fun onEmoji(text: String) {
+        prefs.addEmojiRecent(text)
         inputLogic.commitString(text)
     }
 
@@ -334,14 +426,33 @@ class InfiKeyService : InputMethodService(),
         togglePanel(clipboardPanel)
     }
 
+    override fun onClean(text: String) {
+        inputLogic.commitString(SmartText.cleanText(text))
+        togglePanel(clipboardPanel)
+    }
+
+    override fun onToScript(text: String, lang: String) {
+        inputLogic.commitString(com.infikey.layout.Transliteration.translate(text, lang))
+        togglePanel(clipboardPanel)
+    }
+
+    override fun onAskAi(text: String) {
+        togglePanel(clipboardPanel)
+        aiPanel.runExternalTask(com.infikey.ai.AiPrompts.tldr(text))
+    }
+
     // ---- AI panel callbacks ----
 
     override fun commitText(text: String) {
         inputLogic.commitString(text)
-        Global.clipboard.observeText(text)
+        if (!inputLogic.incognito) Global.clipboard.observeText(text)
     }
 
+    override fun appPackage(): String =
+        currentInputEditorInfo?.packageName?.toString().orEmpty()
+
     override fun fieldContext(): Pair<String, String> {
+        if (inputLogic.incognito) return "Protected field — AI off" to ""
         val ic = currentInputConnection ?: return (fieldInfo?.hint ?: "") to ""
         val before = ic.getTextBeforeCursor(600, 0)?.toString() ?: ""
         val after = ic.getTextAfterCursor(200, 0)?.toString() ?: ""
@@ -357,6 +468,7 @@ class InfiKeyService : InputMethodService(),
     // ---- voice typing ----
 
     private fun startVoice() {
+        if (!prefs.feature("voice")) return
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             android.widget.Toast.makeText(this, "No speech service installed", android.widget.Toast.LENGTH_SHORT).show()
             return

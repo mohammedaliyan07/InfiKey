@@ -34,6 +34,8 @@ class KeyboardView(context: Context) : View(context) {
         fun onGlideMove(x: Float, y: Float)
         fun onGlideEnd(cancelled: Boolean)
         fun onHideRequest()
+        /** Shape gesture detected: "caret" or "circle" (#74). */
+        fun onShape(shape: String)
     }
 
     var callbacks: Callbacks? = null
@@ -71,6 +73,25 @@ class KeyboardView(context: Context) : View(context) {
     private var downTime = 0L
     private var longPressFired = false
     private var glideMode = false
+    private var lastTouchAt = 0L
+
+    // glide trail (#3) — visible stroke that follows the finger
+    private val trailPoints = mutableListOf<Pair<Float, Float>>()
+    private val trailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    // shape gestures (#74) — sampled touch path, classified on lift
+    private val shapePoints = mutableListOf<Pair<Float, Float>>()
+
+    // spacebar trackpad (#49) — continuous slide moves the caret
+    private var trackpadLastX = Float.NaN
+    private var trackpadAccum = 0f
+
+    private val powerSave: Boolean
+        get() = (context.getSystemService(android.os.PowerManager::class.java))?.isPowerSaveMode == true
     private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
             if (e1 == null) return false
@@ -109,6 +130,7 @@ class KeyboardView(context: Context) : View(context) {
 
     init {
         setLayerType(LAYER_TYPE_SOFTWARE, null) // needed for blur shadows
+        contentDescription = "InfiKey keyboard" // TalkBack announcement
         textPaint.textAlign = Paint.Align.CENTER
         hintTextPaint.textAlign = Paint.Align.CENTER
         hintTextPaint.textSize = resources.displayMetrics.density * 9f
@@ -126,9 +148,18 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     fun setLayout(l: com.infikey.layout.Layout) {
-        layout = l
+        // number row toggle (#1): prepend digits to any letter layout
+        layout = if (prefs.numberRow && l.id != "numpad" && !l.id.startsWith("_symbols"))
+            withNumberRow(l) else l
         requestLayout()
         invalidate()
+    }
+
+    private fun withNumberRow(l: com.infikey.layout.Layout): com.infikey.layout.Layout {
+        if (l.main.firstOrNull()?.keys?.firstOrNull()?.label == "1") return l
+        val digits = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
+            .map { com.infikey.layout.Key(it, width = 1f) }
+        return l.copy(main = listOf(com.infikey.layout.row(*digits.toTypedArray())) + l.main)
     }
 
     fun setCapsState(shift: Boolean, locked: Boolean) {
@@ -209,7 +240,21 @@ class KeyboardView(context: Context) : View(context) {
                 canvas.drawRoundRect(rect, radius, radius, accentPaint)
             }
             if (key == rippleKey && rippleAlpha > 0) {
-                ripplePaint.color = withAlpha(theme.accent, rippleAlpha)
+                // press animation styles (#58): glow / ripple / bounce / retro
+                when (prefs.pressAnim) {
+                    "glow", "bounce" -> {
+                        ripplePaint.color = withAlpha(theme.accent, rippleAlpha)
+                        ripplePaint.maskFilter = BlurMaskFilter(d * 9f, BlurMaskFilter.Blur.NORMAL)
+                    }
+                    "retro" -> {
+                        ripplePaint.color = withAlpha(theme.accent2, 0.85f)
+                        ripplePaint.maskFilter = null
+                    }
+                    else -> {
+                        ripplePaint.color = withAlpha(theme.accent, rippleAlpha)
+                        ripplePaint.maskFilter = null
+                    }
+                }
                 canvas.drawRoundRect(rect, radius, radius, ripplePaint)
             }
 
@@ -226,6 +271,36 @@ class KeyboardView(context: Context) : View(context) {
                 canvas.drawText(key.popups.first(), rect.right - d * 8, rect.top + d * 12, hintTextPaint)
             }
         }
+
+        drawGlideTrail(canvas, d)
+        drawIdleGlow(canvas, radius, d)
+    }
+
+    /** Fading accent stroke following the glide path (#3). */
+    private fun drawGlideTrail(canvas: Canvas, d: Float) {
+        if (!glideMode || trailPoints.size < 2 || powerSave) return
+        val path = Path()
+        trailPoints.forEachIndexed { i, (x, y) -> if (i == 0) path.moveTo(x, y) else path.lineTo(x, y) }
+        trailPaint.strokeWidth = d * 5f
+        trailPaint.color = theme.accent
+        trailPaint.alpha = 150
+        canvas.drawPath(path, trailPaint)
+    }
+
+    /** Idle delight (#82): keys breathe light while you think (skipped in saver). */
+    private fun drawIdleGlow(canvas: Canvas, radius: Float, d: Float) {
+        if (!prefs.idleEasterEgg || powerSave || glideMode) return
+        val idleMs = System.currentTimeMillis() - lastTouchAt
+        if (idleMs < 4000) return
+        val breathe = ((idleMs % 2400) / 2400f)
+        val pulse = 0.5f - 0.5f * kotlin.math.cos(breathe * 2f * Math.PI.toFloat())
+        shadowPaint.color = withAlpha(theme.accent, (0.10f + 0.10f * pulse))
+        shadowPaint.maskFilter = BlurMaskFilter(d * 10f, BlurMaskFilter.Blur.NORMAL)
+        canvas.drawRoundRect(
+            RectF(0f, 0f, width.toFloat(), height.toFloat()), radius, radius, shadowPaint
+        )
+        shadowPaint.maskFilter = BlurMaskFilter(d * 3f, BlurMaskFilter.Blur.NORMAL)
+        postInvalidateOnAnimation()
     }
 
     private fun displayLabel(key: com.infikey.layout.Key): String = when (key.action) {
@@ -242,9 +317,18 @@ class KeyboardView(context: Context) : View(context) {
             val bmp = android.graphics.BitmapFactory.decodeFile(path) ?: return
             val dim = prefs.bgDim
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = ((1f - dim) * 255).toInt() }
+            // blur (#25): downscale then upscale — cheap, real-looking softening
+            val pre = if (prefs.bgBlur > 1f) {
+                val f = 1f / (prefs.bgBlur / 4f).coerceIn(1f, 16f)
+                android.graphics.Bitmap.createScaledBitmap(
+                    bmp, (bmp.width * f).toInt().coerceAtLeast(1),
+                    (bmp.height * f).toInt().coerceAtLeast(1), true
+                )
+            } else bmp
             val scaled = android.graphics.Bitmap.createScaledBitmap(
-                bmp, width, height, true
+                pre, width, height, true
             )
+            if (pre !== bmp) pre.recycle()
             canvas.save()
             val clip = Path().apply { addRoundRect(RectF(0f, 0f, width.toFloat(), height.toFloat()), radius.toFloat(), radius.toFloat(), Path.Direction.CW) }
             canvas.clipPath(clip)
@@ -273,9 +357,15 @@ class KeyboardView(context: Context) : View(context) {
         gestureDetector.onTouchEvent(event)
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
+                lastTouchAt = System.currentTimeMillis()
                 activeKey = keyRects.firstOrNull { it.first.contains(event.x, event.y) }?.second
                 downTime = System.currentTimeMillis()
                 longPressFired = false
+                trailPoints.clear()
+                shapePoints.clear()
+                shapePoints.add(event.x to event.y)
+                trackpadLastX = event.x
+                trackpadAccum = 0f
                 activeKey?.let { ripple(it); haptic(); if (prefs.keySound) click() }
                 postDelayed(longPressRunnable, 380)
             }
@@ -286,14 +376,43 @@ class KeyboardView(context: Context) : View(context) {
                     activeKey = now
                     activeKey?.let { ripple(it) }
                 }
+                if (trailPoints.isEmpty() ||
+                    (kotlin.math.hypot(
+                        (event.x - trailPoints.last().first).toDouble(),
+                        (event.y - trailPoints.last().second).toDouble()
+                    ) > 8)
+                ) trailPoints.add(event.x to event.y)
+                if (shapePoints.size < 64) shapePoints.add(event.x to event.y)
+                // spacebar trackpad: slide moves the caret continuously (#49)
+                if (activeKey?.action == com.infikey.layout.KeyAction.SPACE &&
+                    !trackpadLastX.isNaN()
+                ) {
+                    trackpadAccum += event.x - trackpadLastX
+                    trackpadLastX = event.x
+                    val step = resources.displayMetrics.density * 34f
+                    while (trackpadAccum > step) {
+                        callbacks?.onKey("cursor_right", com.infikey.layout.KeyAction.NONE)
+                        trackpadAccum -= step
+                    }
+                    while (trackpadAccum < -step) {
+                        callbacks?.onKey("cursor_left", com.infikey.layout.KeyAction.NONE)
+                        trackpadAccum += step
+                    }
+                }
             }
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(longPressRunnable)
                 val k = activeKey
                 activeKey = null
                 rippleKey = null
-                invalidate()
-                if (!longPressFired && k != null) fireKey(k)
+                trailPoints.clear()
+                val shape = if (prefs.shapeGestures && shapePoints.size >= 5) classifyShape(shapePoints) else null
+                shapePoints.clear()
+                if (shape != null) {
+                    callbacks?.onShape(shape)
+                } else if (!longPressFired && k != null) {
+                    fireKey(k)
+                }
             }
             MotionEvent.ACTION_CANCEL -> {
                 removeCallbacks(longPressRunnable)
@@ -352,10 +471,46 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun click() {
+        // sound packs (#59)
+        val fx = when (prefs.soundPack) {
+            "silent" -> return
+            "mechanical" -> android.media.AudioManager.FX_KEYCLICK
+            "typewriter" -> android.media.AudioManager.FX_KEYPRESS_DELETE
+            "pop" -> android.media.AudioManager.FX_KEYPRESS_SPACEBAR
+            else -> android.media.AudioManager.FX_KEYPRESS_STANDARD
+        }
         runCatching {
             val am = context.getSystemService(android.media.AudioManager::class.java) ?: return
-            am.playSoundEffect(android.media.AudioManager.FX_KEYPRESS_STANDARD, 0.6f)
+            am.playSoundEffect(fx, 0.6f)
         }
+    }
+
+    /** Classifies the sampled touch path: "^" opens AI, circle selects all (#74). */
+    private fun classifyShape(pts: List<Pair<Float, Float>>): String? {
+        val dp = resources.displayMetrics.density
+        val xs = pts.map { it.first }
+        val ys = pts.map { it.second }
+        val cx = xs.average(); val cy = ys.average()
+        var total = 0f
+        var prevA = Float.NaN
+        for ((x, y) in pts) {
+            val a = Math.atan2((y - cy).toDouble(), (x - cx).toDouble()).toFloat()
+            if (!prevA.isNaN()) {
+                var da = a - prevA
+                if (da > Math.PI) da -= 2 * Math.PI.toFloat()
+                if (da < -Math.PI) da += 2 * Math.PI.toFloat()
+                total += da
+            }
+            prevA = a
+        }
+        if (Math.abs(total) > Math.PI * 1.6) return "circle"
+        val minY = ys.min()
+        val iMin = ys.indexOf(minY)
+        if (iMin in 1 until pts.size - 1 &&
+            (ys[0] - minY) > 110 * dp && (ys.last() - minY) > 110 * dp &&
+            abs(xs.last() - xs.first()) < 150 * dp
+        ) return "caret"
+        return null
     }
 
     // ---- popups ----

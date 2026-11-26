@@ -85,6 +85,16 @@ object AiPrompts {
         return out.filter { it.isNotBlank() }.ifEmpty { listOf(output.trim()) }
     }
 
+    /** #43 — tone check: what does the draft sound like, one soften suggestion. */
+    fun toneCheck(text: String): List<ChatMessage> = listOf(
+        ChatMessage.system(
+            "$PERSONA Analyse the tone of this draft. Reply in exactly two short lines: " +
+                "line 1 'Tone: <word>' (rude / blunt / neutral / friendly / formal); " +
+                "line 2 one concrete suggestion to soften or improve. Under 30 words total."
+        ),
+        ChatMessage.user(text.ifBlank { "(empty draft)" })
+    )
+
     fun parseLines(output: String, max: Int): List<String> =
         output.lines().map { it.trim().removePrefix("-").removePrefix("•").trim() }
             .filter { it.isNotEmpty() }.take(max)

@@ -2,6 +2,7 @@ package com.infikey.prefs
 
 import android.content.Context
 import android.content.SharedPreferences
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** Central settings store. */
@@ -177,5 +178,68 @@ class Prefs(context: Context) {
 
     fun writeMacros(m: Map<String, String>) {
         macrosJson = JSONObject(m).toString()
+    }
+
+    // ---- my facts: form auto-fill + {{}} templates (#17, #47) ----
+    var factsJson: String
+        get() = sp.getString("facts", "{}") ?: "{}"
+        set(v) = sp.edit().putString("facts", v).apply()
+
+    fun facts(): Map<String, String> = runCatching {
+        val o = JSONObject(factsJson)
+        o.keys().asSequence().associateWith { o.getString(it) }
+    }.getOrDefault(emptyMap())
+
+    fun writeFact(k: String, v: String) {
+        val m = facts().toMutableMap()
+        m[k.lowercase()] = v
+        factsJson = JSONObject(m).toString()
+    }
+
+    // ---- look personalisation ----
+    var pressAnim: String   // glow | ripple | bounce | retro
+        get() = sp.getString("press_anim", "ripple") ?: "ripple"
+        set(v) = sp.edit().putString("press_anim", v).apply()
+
+    var soundPack: String   // standard | mechanical | typewriter | pop | silent
+        get() = sp.getString("sound_pack", "standard") ?: "standard"
+        set(v) = sp.edit().putString("sound_pack", v).apply()
+
+    var biometricLock: Boolean
+        get() = sp.getBoolean("biometric_lock", false)
+        set(v) = sp.edit().putBoolean("biometric_lock", v).apply()
+
+    // ---- emoji recents ----
+    fun emojiRecents(): List<String> =
+        sp.getString("emoji_recents", "")?.split(" ")?.filter { it.isNotBlank() } ?: emptyList()
+
+    fun addEmojiRecent(e: String) {
+        val cur = emojiRecents().filter { it != e }.toMutableList()
+        cur.add(0, e)
+        sp.edit().putString("emoji_recents", cur.take(16).joinToString(" ")).apply()
+    }
+
+    // ---- AI transparency log (#63): what was sent, when, how big ----
+    var aiLogJson: String
+        get() = sp.getString("ai_log_entries", "[]") ?: "[]"
+        set(v) = sp.edit().putString("ai_log_entries", v).apply()
+
+    fun appendAiLog(kind: String, chars: Int) {
+        val arr = runCatching { JSONArray(aiLogJson) }.getOrDefault(JSONArray())
+        val out = JSONArray()
+        out.put(JSONObject().put("t", System.currentTimeMillis()).put("kind", kind).put("chars", chars))
+        for (i in 0 until minOf(arr.length(), 40)) out.put(arr.get(i))
+        aiLogJson = out.toString()
+    }
+
+    fun learnedWordCount(): Int =
+        sp.all.keys.filter { it.startsWith("learned_") }
+            .sumOf { (sp.getStringSet(it, emptySet()) ?: emptySet()).size }
+
+    /** One-tap wipe of everything InfiKey learned (#85). */
+    fun wipeLearnedWords() {
+        val editor = sp.edit()
+        sp.all.keys.filter { it.startsWith("learned_") }.forEach { editor.remove(it) }
+        editor.remove("per_app_memory").apply()
     }
 }

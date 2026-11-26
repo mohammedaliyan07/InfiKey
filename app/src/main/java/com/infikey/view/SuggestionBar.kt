@@ -19,6 +19,8 @@ class SuggestionBar(context: Context) : LinearLayout(context) {
         fun onAiTap()
         fun onClipboardTap()
         fun onSettingsTap()
+        /** Tap on the smart context chip (calculator / undo / autofill / …). */
+        fun onContextChip(label: String)
     }
 
     var callbacks: Callbacks? = null
@@ -31,11 +33,27 @@ class SuggestionBar(context: Context) : LinearLayout(context) {
         chip(1f), chip(1f), chip(1f)
     )
 
+    private val contextChip = TextView(context).apply {
+        layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 0.8f)
+        gravity = Gravity.CENTER
+        textSize = 14f
+        setSingleLine()
+        setPadding((10 * d).toInt(), (7 * d).toInt(), (10 * d).toInt(), (7 * d).toInt())
+        background = GradientDrawable().apply {
+            cornerRadius = 12 * d
+            setColor(withAlpha(theme.accent, 0.22f))
+            setStroke((1 * d).toInt(), withAlpha(theme.accent, 0.55f))
+        }
+        visibility = GONE
+        setOnClickListener { if (visibility == VISIBLE) callbacks?.onContextChip(text.toString()) }
+    }
+
     init {
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding((8 * d).toInt(), (5 * d).toInt(), (8 * d).toInt(), (5 * d).toInt())
         chips.forEach { addView(it) }
+        addView(contextChip)
         addView(iconButton("\u2726", 0.62f) { callbacks?.onAiTap() })     // ✦ AI
         addView(iconButton("\uD83D\uDCCB", 0.62f) { callbacks?.onClipboardTap() }) // 📋
         addView(iconButton("\u2699", 0.62f) { callbacks?.onSettingsTap() }) // ⚙
@@ -85,6 +103,15 @@ class SuggestionBar(context: Context) : LinearLayout(context) {
                 chipView.visibility = VISIBLE
             }
         }
+    }
+
+    fun showContextChip(label: String?) {
+        if (label.isNullOrEmpty() || !prefs.suggestionsEnabled) {
+            contextChip.visibility = GONE
+            return
+        }
+        contextChip.text = label
+        contextChip.visibility = VISIBLE
     }
 
     fun hideAll() {

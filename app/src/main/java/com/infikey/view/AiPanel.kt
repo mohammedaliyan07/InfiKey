@@ -35,6 +35,8 @@ class AiPanel(context: Context) : LinearLayout(context) {
         /** Returns (fieldHint, fieldText) for context-aware actions. */
         fun fieldContext(): Pair<String, String>
         fun onPanelClosed()
+        /** Focused app package — powers per-app AI tone memory (#68). */
+        fun appPackage(): String
     }
 
     var callbacks: Callbacks? = null
@@ -57,6 +59,9 @@ class AiPanel(context: Context) : LinearLayout(context) {
     private var selectedTone = "natural"
     private var lastResult = ""
     private var outStyle = 0  // Unicode text style (feature 69)
+
+    private var tts: android.speech.tts.TextToSpeech? = null
+    private var ttsReady = false
 
     init {
         orientation = VERTICAL
@@ -110,6 +115,7 @@ class AiPanel(context: Context) : LinearLayout(context) {
         footer.addView(button("⌨ Type it", accent = true) {
             if (lastResult.isNotBlank()) {
                 val styled = if (outStyle == 0) lastResult else UnicodeStyles.transform(lastResult, outStyle)
+                if (prefs.readAloudBeforeSend) speak(styled)  // read-back before send (#71)
                 callbacks?.commitText(styled)
             }
             close()
@@ -197,6 +203,9 @@ class AiPanel(context: Context) : LinearLayout(context) {
         actionGrid.addView(chip("TL;DR") { runTask(AiPrompts.tldr(fieldText())) })
         actionGrid.addView(chip("🌐 Translate") { showTranslate() })
         actionGrid.addView(chip("🎂 Festival") { showFestival() })
+        actionGrid.addView(chip("🎭 Tone check") {
+            runTask(AiPrompts.toneCheck(fieldText()))
+        })
         showTones()
     }
 
@@ -210,6 +219,10 @@ class AiPanel(context: Context) : LinearLayout(context) {
         for (t in listOf("natural", "formal", "casual", "friendly", "genz")) {
             toneRow.addView(chip(t.replaceFirstChar { it.uppercase() }, accent = t == selectedTone) {
                 selectedTone = t
+                // per-app tone memory (#68): formal at work, casual in chats
+                callbacks?.appPackage()?.takeIf { it.isNotEmpty() }?.let {
+                    Global.perApp.rememberTone(it, t)
+                }
                 showActions()
             })
         }
@@ -349,8 +362,26 @@ class AiPanel(context: Context) : LinearLayout(context) {
     private fun fieldHint(): String = callbacks?.fieldContext()?.first ?: ""
     private fun fieldText(): String = callbacks?.fieldContext()?.second ?: ""
 
+    /** Entry point for other panels: open + run a task directly. */
+    fun runExternalTask(messages: List<com.infikey.ai.ChatMessage>) {
+        open()
+        runTask(messages)
+    }
+
+    private fun speak(text: String) {
+        val engine = tts ?: android.speech.tts.TextToSpeech(context) { st ->
+            ttsReady = st == android.speech.tts.TextToSpeech.SUCCESS
+        }.also { tts = it }
+        if (ttsReady) engine.speak(text, android.speech.tts.TextToSpeech.QUEUE_ADD, null, "infikey")
+    }
+
     fun open() {
         visibility = VISIBLE
+        // per-app tone recall (#68)
+        val pkg = callbacks?.appPackage().orEmpty()
+        if (pkg.isNotEmpty()) {
+            Global.perApp.get(pkg)?.tone?.takeIf { it.isNotEmpty() }?.let { selectedTone = it }
+        }
         refreshStatus()
         showActions()
     }

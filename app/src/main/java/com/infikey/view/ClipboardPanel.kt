@@ -13,7 +13,15 @@ import com.infikey.theme.ThemeEngine
 /** Clipboard history panel: entries, tap = paste, long-press = pin, ✕ = delete. */
 class ClipboardPanel(context: Context) : ScrollView(context) {
 
-    interface Callbacks { fun onPaste(text: String) }
+    interface Callbacks {
+        fun onPaste(text: String)
+        /** Strip zero-width junk and insert (#75). */
+        fun onClean(text: String)
+        /** Convert romanised text to an Indic script (#81). */
+        fun onToScript(text: String, lang: String)
+        /** Ask the AI about the copied text (TL;DR) (#70). */
+        fun onAskAi(text: String)
+    }
     var callbacks: Callbacks? = null
 
     private val theme get() = ThemeEngine(context).current()
@@ -38,6 +46,32 @@ class ClipboardPanel(context: Context) : ScrollView(context) {
             setPadding(0, (6 * d).toInt(), 0, (10 * d).toInt())
         }
         list.addView(header)
+
+        // tools row: clean · ask AI · clipboard → script (#75, #81, #70)
+        val top = runCatching { Global.clipboard.all() }.getOrDefault(emptyList())
+            .firstOrNull { !it.isSensitive() }
+        val tools = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+        fun tool(label: String, onTap: () -> Unit) = TextView(context).apply {
+            text = label
+            textSize = 13f
+            setTextColor(theme.text)
+            setPadding((14 * d).toInt(), (8 * d).toInt(), (14 * d).toInt(), (8 * d).toInt())
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).also {
+                it.setMargins(0, 0, (8 * d).toInt(), (8 * d).toInt())
+            }
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 12 * d
+                setColor(theme.keySpecial)
+            }
+            setOnClickListener { if (top == null) return@setOnClickListener; onTap() }
+        }
+        tools.addView(tool("🧹 Clean") { callbacks?.onClean(top!!.text) })
+        tools.addView(tool("🤖 Ask AI") { callbacks?.onAskAi(top!!.text) })
+        for ((lang, label) in listOf("devanagari" to "→ देवनागरी", "tamil" to "→ தமிழ்",
+                "telugu" to "→ తెలుగు", "bengali" to "→ বাংলা", "gujarati" to "→ ગુજરાતી", "gurmukhi" to "→ ਪੰਜਾਬੀ")) {
+            tools.addView(tool(label) { callbacks?.onToScript(top!!.text, lang) })
+        }
+        list.addView(tools)
 
         val entries = runCatching { Global.clipboard.all() }.getOrDefault(emptyList())
         if (entries.isEmpty()) {
@@ -79,6 +113,26 @@ class ClipboardPanel(context: Context) : ScrollView(context) {
             setOnLongClickListener { Global.clipboard.pin(e); rebuild(); true }
         }
         row.addView(body)
+        val edit = TextView(context).apply {
+            text = "✎"
+            textSize = 14f
+            setTextColor(theme.hint)
+            setPadding((10 * d).toInt(), 0, (4 * d).toInt(), 0)
+            setOnClickListener {
+                val box = android.widget.EditText(context).apply { setText(e.text) }
+                android.app.AlertDialog.Builder(context)
+                    .setTitle("Edit before paste")
+                    .setView(box)
+                    .setPositiveButton("Paste") { _, _ ->
+                        val t = box.text.toString()
+                        setClip(t)
+                        callbacks?.onPaste(t)
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+        }
+        row.addView(edit)
         val del = TextView(context).apply {
             text = "✕"
             textSize = 14f

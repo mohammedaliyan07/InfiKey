@@ -84,4 +84,23 @@ class FontManager(context: Context) {
         cache.remove(id)
         return f.delete()
     }
+
+    /**
+     * Google Fonts catalog (#27): downloads an OFL font from the fontsource
+     * CDN and stores it in the app's fonts dir. id = fontsource family id.
+     */
+    fun download(id: String, label: String): Result<Boolean> = runCatching {
+        val url = "https://cdn.jsdelivr.net/fontsource/fonts/$id@latest/latin-400-normal.ttf"
+        val dst = File(dir, "$label.ttf")
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = 15000
+        conn.readTimeout = 20000
+        conn.instanceFollowRedirects = true
+        if (conn.responseCode != 200) error("HTTP ${conn.responseCode}")
+        conn.inputStream.use { ins -> dst.outputStream().use { ins.copyTo(it) } }
+        conn.disconnect()
+        Typeface.createFromFile(dst) // validate — throws if not a real font
+        cache.remove(id)
+        true
+    }
 }

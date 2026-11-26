@@ -2,6 +2,7 @@ package com.infikey.ai
 
 import android.content.Context
 import android.util.Log
+import com.infikey.prefs.Prefs
 
 /**
  * Multi-model router.
@@ -77,7 +78,15 @@ class AiRouter(private val context: Context) {
     ): Result<String> = runCatching {
         val engine = engineFor(tier)
             ?: throw IllegalStateException("no AI engine available — load a model or add a cloud API")
-        engine.chat(messages, opts)
+        val out = engine.chat(messages, opts)
+        logAi(engine, out.length)
+        out
+    }
+
+    /** AI transparency log (#63): record every AI send, on-device or cloud. */
+    private fun logAi(engine: AiEngine, chars: Int) {
+        val p = Prefs(context)
+        if (p.aiLogEnabled) p.appendAiLog(if (engine.id.startsWith("cloud")) "cloud" else "device", chars)
     }
 
     /**
@@ -97,6 +106,7 @@ class AiRouter(private val context: Context) {
             sb.append(token)
             onPartial(sb.toString())
         }
+        logAi(engine, sb.length)
         return sb.toString()
     }
 

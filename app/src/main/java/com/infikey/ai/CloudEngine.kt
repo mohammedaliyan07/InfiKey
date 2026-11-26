@@ -33,7 +33,8 @@ data class CloudEndpoint(
 
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("name", name).put("baseUrl", baseUrl)
-        .put("apiKey", apiKey).put("model", model)
+        .put("apiKey", com.infikey.ime.Crypt.encrypt(apiKey))
+        .put("model", model)
         .put("headers", JSONObject(headers)).put("maxTokens", maxTokens)
 
     companion object {
@@ -41,7 +42,7 @@ data class CloudEndpoint(
             id = o.optString("id", ""),
             name = o.optString("name", "endpoint"),
             baseUrl = o.optString("baseUrl", ""),
-            apiKey = o.optString("apiKey", ""),
+            apiKey = com.infikey.ime.Crypt.decrypt(o.optString("apiKey", "")),
             model = o.optString("model", ""),
             headers = (o.optJSONObject("headers") ?: JSONObject()).let { h ->
                 h.keys().asSequence().associateWith { k -> h.optString(k) }
