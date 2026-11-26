@@ -187,7 +187,7 @@ class InfiKeyService : InputMethodService(),
             KeyAction.GLOBE -> cycleLayout()
             KeyAction.EMOJI -> togglePanel(emojiPanel)
             KeyAction.CLIPBOARD -> { clipboardPanel.rebuild(); togglePanel(clipboardPanel) }
-            KeyAction.AI -> if (aiPanel.isOpen) aiPanel.close() else { closePanels(); aiPanel.open() }
+            KeyAction.AI -> if (aiPanel.isOpen()) aiPanel.close() else { closePanels(); aiPanel.open() }
             KeyAction.SETTINGS -> openSettings()
             KeyAction.VOICE -> startVoice()
             KeyAction.NONE -> when (output) {
@@ -343,9 +343,9 @@ class InfiKeyService : InputMethodService(),
 
     override fun fieldContext(): Pair<String, String> {
         val ic = currentInputConnection ?: return (fieldInfo?.hint ?: "") to ""
-        val before = ic.getTextBeforeCursor(600, 0).orEmpty()
-        val after = ic.getTextAfterCursor(200, 0).orEmpty()
-        val selected = ic.getSelectedText(0).orEmpty()
+        val before = ic.getTextBeforeCursor(600, 0)?.toString() ?: ""
+        val after = ic.getTextAfterCursor(200, 0)?.toString() ?: ""
+        val selected = ic.getSelectedText(0)?.toString() ?: ""
         val text = selected.ifBlank { (before + after).trim() }
         return (fieldInfo?.hint ?: "") to text
     }

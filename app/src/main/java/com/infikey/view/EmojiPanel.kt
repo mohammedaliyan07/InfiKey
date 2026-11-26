@@ -78,7 +78,6 @@ class EmojiPanel(context: Context) : LinearLayout(context) {
             numColumns = 8
             gravity = Gravity.CENTER
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, (230 * d).toInt())
-            adapter = android.widget.BaseAdapter() // replaced in selectTab
         }
         addView(grid)
 

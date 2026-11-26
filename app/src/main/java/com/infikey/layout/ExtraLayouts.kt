@@ -20,10 +20,10 @@ object ExtraLayouts {
                 Key("⌫", action = KeyAction.BACKSPACE, width = 1.5f)
             ),
             row(
-                Key("ABC", label = "ABC", output = "abc", action = KeyAction.ALPHABET, width = 1.3f),
-                Key("\uD83C\uDF10", label = "\uD83C\uDF10", output = "globe", action = KeyAction.GLOBE, width = 1f),
+                Key("ABC", output = "abc", action = KeyAction.ALPHABET, width = 1.3f),
+                Key("\uD83C\uDF10", output = "globe", action = KeyAction.GLOBE, width = 1f),
                 Key(",", width = 1f),
-                Key("space", label = "dev", output = " ", action = KeyAction.SPACE, width = 4f),
+                Key("space", output = " ", action = KeyAction.SPACE, width = 4f),
                 Key(".", width = 1f),
                 Key("⏎", action = KeyAction.ENTER, width = 1.5f)
             )
@@ -48,10 +48,10 @@ object ExtraLayouts {
                 Key("⌫", action = KeyAction.BACKSPACE, width = 1.5f)
             ),
             row(
-                Key("ABC", label = "ABC", output = "abc", action = KeyAction.ALPHABET, width = 1.3f),
-                Key("\uD83C\uDF10", label = "\uD83C\uDF10", output = "globe", action = KeyAction.GLOBE, width = 1f),
+                Key("ABC", output = "abc", action = KeyAction.ALPHABET, width = 1.3f),
+                Key("\uD83C\uDF10", output = "globe", action = KeyAction.GLOBE, width = 1f),
                 Key(",", width = 1f),
-                Key("space", label = "md", output = " ", action = KeyAction.SPACE, width = 4f),
+                Key("space", output = " ", action = KeyAction.SPACE, width = 4f),
                 Key(".", width = 1f),
                 Key("⏎", action = KeyAction.ENTER, width = 1.5f)
             )
@@ -67,16 +67,16 @@ object ExtraLayouts {
             ),
             row(
                 key("4"), key("5"), key("6"), key("*", listOf("×")),
-                Key("C", label = "C", output = "clear", action = KeyAction.NONE, width = 1.5f)
+                Key("C", output = "clear", action = KeyAction.NONE, width = 1.5f)
             ),
             row(
                 key("1"), key("2"), key("3"), key("-", listOf("−")),
-                Key("=", label = "=", output = "=", width = 1.5f)
+                Key("=", output = "=", width = 1.5f)
             ),
             row(
-                Key("ABC", label = "ABC", output = "abc", action = KeyAction.ALPHABET, width = 1.3f),
+                Key("ABC", output = "abc", action = KeyAction.ALPHABET, width = 1.3f),
                 key("0"), key(".", listOf(",")),
-                Key("space", label = "␣", output = " ", action = KeyAction.SPACE, width = 2f),
+                Key("space", output = " ", action = KeyAction.SPACE, width = 2f),
                 Key("⏎", action = KeyAction.ENTER, width = 1.5f)
             )
         )

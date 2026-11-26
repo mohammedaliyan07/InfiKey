@@ -25,13 +25,13 @@ class ThemeEngine(private val context: Context) {
         val radiusDp: Int = 16
     ) {
         fun toCode(): String = listOf(
-            "bg=%06X" format (bg and 0xFFFFFF),
-            "keys=%06X" format (key and 0xFFFFFF),
-            "special=%06X" format (keySpecial and 0xFFFFFF),
-            "text=%06X" format (text and 0xFFFFFF),
-            "hint=%06X" format (hint and 0xFFFFFF),
-            "accent=%06X" format (accent and 0xFFFFFF),
-            "accent2=%06X" format (accent2 and 0xFFFFFF),
+            "bg=%06X".format(bg and 0xFFFFFF),
+            "keys=%06X".format(key and 0xFFFFFF),
+            "special=%06X".format(keySpecial and 0xFFFFFF),
+            "text=%06X".format(text and 0xFFFFFF),
+            "hint=%06X".format(hint and 0xFFFFFF),
+            "accent=%06X".format(accent and 0xFFFFFF),
+            "accent2=%06X".format(accent2 and 0xFFFFFF),
             "radius=$radiusDp"
         ).joinToString(";")
 

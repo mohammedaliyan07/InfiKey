@@ -198,7 +198,7 @@ class SuggestionEngine(private val context: Context) {
     fun scoreGlide(letters: List<String>, max: Int = 3): List<String> {
         if (letters.size < 2) return emptyList()
         val first = letters.first().lowercase()
-        val counts = letters.groupingBy { it.lowercase() }.eachCount()
+        val counts = letters.groupingBy { it.lowercase().first() }.eachCount()
         val result = mutableListOf<Pair<String, Int>>()
         synchronized(words) {
             for ((w, f) in words) {

@@ -95,14 +95,14 @@ class AiPanel(context: Context) : LinearLayout(context) {
 
         // footer: Type it / Copy / Continue
         val footer = LinearLayout(context).apply { orientation = HORIZONTAL }
-        footer.addView(button("↺ Retry") { retry() }, 1f)
+        footer.addView(button("↺ Retry") { retry() }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         footer.addView(button("⧉ Copy") {
             copyToClipboard(lastResult); toast("Copied")
-        }, 1f)
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         footer.addView(button("⌨ Type it", accent = true) {
             if (lastResult.isNotBlank()) callbacks?.commitText(lastResult)
             close()
-        }, 1.4f)
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f))
         addView(footer)
 
         refreshStatus()
@@ -122,7 +122,7 @@ class AiPanel(context: Context) : LinearLayout(context) {
 
     // ---- UI helpers ----
 
-    private fun chip(label: String, onTap: () -> Unit, accent: Boolean = false) = TextView(context).apply {
+    private fun chip(label: String, accent: Boolean = false, onTap: () -> Unit) = TextView(context).apply {
         text = label
         textSize = 13f
         setTextColor(if (accent) 0xFFFFFFFF.toInt() else theme.text)

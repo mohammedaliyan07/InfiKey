@@ -55,7 +55,7 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
 
     fun commitString(text: String, finish: Boolean = true) {
         if (finish) finishComposing()
-        ic?.commitText(text, true)
+        ic?.commitText(text, 1)
     }
 
     /** A letter key was pressed. */
@@ -81,7 +81,7 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
         val conn = ic ?: return
         val raw = composing.toString()
         if (raw.isEmpty()) {
-            ic?.commitText(replacement, true)
+            ic?.commitText(replacement, 1)
             return
         }
         val translitActive = prefs.translitLang.isNotEmpty() &&
@@ -92,10 +92,10 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
             else -> raw
         }
         conn.finishComposingText()
-        ic?.commitText(final, true)
+        ic?.commitText(final, 1)
         commitToHistory(final)
         composing.clear()
-        if (replacement.isNotEmpty()) ic?.commitText(replacement, true)
+        if (replacement.isNotEmpty()) ic?.commitText(replacement, 1)
     }
 
     /** Smart backspace: kill composing char first, else delete word with accents kept. */
@@ -141,7 +141,7 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
             conn.deleteSurroundingText(composing.length, 0)
         }
         composing.clear()
-        ic?.commitText(word, true)
+        ic?.commitText(word, 1)
         commitToHistory(word)
     }
 
@@ -164,7 +164,7 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
         val macro = prefs.readMacros()[raw] ?: return false
         composing.clear()
         ic?.setComposingText("", 1)
-        ic?.commitText(macro, true)
+        ic?.commitText(macro, 1)
         return true
     }
 

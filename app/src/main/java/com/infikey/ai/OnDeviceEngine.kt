@@ -60,7 +60,8 @@ class OnDeviceEngine(
                 handle, prompt, opts.maxTokens, opts.temperature, opts.topP, opts.topK,
                 stop, LlamaBridge.TokenCallback { tok ->
                     sb.append(tok)
-                    onTokenListener?.invoke(tok) ?: true
+                    onTokenListener?.invoke(tok)
+                    true
                 }
             )
         }

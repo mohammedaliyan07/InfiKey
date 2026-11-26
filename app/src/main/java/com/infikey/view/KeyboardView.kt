@@ -57,7 +57,7 @@ class KeyboardView(context: Context) : View(context) {
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val keyFill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val keySpecialFill = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SHADOW_LAYER)
+    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val hintTextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -152,7 +152,7 @@ class KeyboardView(context: Context) : View(context) {
         val rows = layout?.main?.size ?: 4
         val rowH = prefs.keyHeightDp * d * (if (prefs.elderMode) 1.18f else 1f)
         val h = (rows * rowH + (rows + 1) * gap + d * 8).toInt()
-        setMeasuredDimension(w, h.coerceAtMost(d * 420))
+        setMeasuredDimension(w, h.coerceAtMost((d * 420).toInt()))
     }
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
@@ -235,7 +235,7 @@ class KeyboardView(context: Context) : View(context) {
         else -> if (shiftOn && layout?.hasCase == true && key.label.length == 1) key.label.uppercase() else key.label
     }
 
-    private fun drawBackgroundImage(canvas: Canvas, radius: Int) {
+    private fun drawBackgroundImage(canvas: Canvas, radius: Float) {
         val path = prefs.bgImagePath
         if (path.isEmpty()) return
         runCatching {

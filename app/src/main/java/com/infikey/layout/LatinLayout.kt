@@ -4,9 +4,9 @@ object LatinLayout {
 
     private fun bottomRow(spaceLabel: String) = row(
         Key("?123", action = KeyAction.SYMBOLS, width = 1.3f),
-        Key("\uD83C\uDF10", label = "\uD83C\uDF10", output = "globe", action = KeyAction.GLOBE, width = 1f),
+        Key("\uD83C\uDF10", output = "globe", action = KeyAction.GLOBE, width = 1f),
         Key(",", width = 1f),
-        Key("space", label = spaceLabel, output = " ", action = KeyAction.SPACE, width = 4f),
+        Key(label = spaceLabel, output = " ", action = KeyAction.SPACE, width = 4f),
         Key(".", width = 1f, popups = listOf("!", "?", ";", ":")),
         Key("⏎", action = KeyAction.ENTER, width = 1.5f)
     )
@@ -61,15 +61,15 @@ object SymbolsLayout {
             key("-"), key("+"), key("("), key(")")
         ),
         row(
-            Key("=\\<", label = "=\\<", output = "more", action = KeyAction.SYMBOLS, width = 1.5f),
+            Key("=\\<", output = "more", action = KeyAction.SYMBOLS, width = 1.5f),
             key("*"), key("\""), key("'"), key(":"), key(";"), key("!"), key("?"),
             Key("⌫", action = KeyAction.BACKSPACE, width = 1.5f)
         ),
         row(
-            Key("ABC", label = "ABC", output = "abc", action = KeyAction.ALPHABET, width = 1.3f),
+            Key("ABC", output = "abc", action = KeyAction.ALPHABET, width = 1.3f),
             Key("\uD83C\uDF10", output = "globe", action = KeyAction.GLOBE, width = 1f),
             Key("_", width = 1f),
-            Key("space", label = "space", output = " ", action = KeyAction.SPACE, width = 4f),
+            Key("space", output = " ", action = KeyAction.SPACE, width = 4f),
             Key("/", width = 1f),
             Key("⏎", action = KeyAction.ENTER, width = 1.5f)
         )
@@ -85,16 +85,16 @@ object SymbolsLayout {
             key("^"), key("®"), key("©"), key("™"), key("°")
         ),
         row(
-            Key("?\\=", label = "?\\=", output = "more2", action = KeyAction.SYMBOLS, width = 1.5f),
+            Key("?\\=", output = "more2", action = KeyAction.SYMBOLS, width = 1.5f),
             key("\\"), key("{"), key("}"), key("["), key("]"),
             key("<"), key(">"),
             Key("⌫", action = KeyAction.BACKSPACE, width = 1.5f)
         ),
         row(
-            Key("ABC", label = "ABC", output = "abc", action = KeyAction.ALPHABET, width = 1.3f),
+            Key("ABC", output = "abc", action = KeyAction.ALPHABET, width = 1.3f),
             Key("\uD83C\uDF10", output = "globe", action = KeyAction.GLOBE, width = 1f),
             Key("=", width = 1f),
-            Key("space", label = "space", output = " ", action = KeyAction.SPACE, width = 4f),
+            Key("space", output = " ", action = KeyAction.SPACE, width = 4f),
             Key("=", width = 1f),
             Key("⏎", action = KeyAction.ENTER, width = 1.5f)
         )

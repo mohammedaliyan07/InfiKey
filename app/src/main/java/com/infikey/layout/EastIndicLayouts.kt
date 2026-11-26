@@ -5,9 +5,9 @@ object EastIndicLayouts {
 
     private fun navRow(spaceLabel: String) = row(
         Key("?123", action = KeyAction.SYMBOLS, width = 1.3f),
-        Key("\uD83C\uDF10", label = "\uD83C\uDF10", output = "globe", action = KeyAction.GLOBE, width = 1f),
+        Key("\uD83C\uDF10", output = "globe", action = KeyAction.GLOBE, width = 1f),
         Key(",", width = 1f),
-        Key("space", label = spaceLabel, output = " ", action = KeyAction.SPACE, width = 4.4f),
+        Key(label = spaceLabel, output = " ", action = KeyAction.SPACE, width = 4.4f),
         Key(".", width = 1f, popups = listOf("?", "!")),
         Key("⏎", action = KeyAction.ENTER, width = 1.5f)
     )

@@ -450,7 +450,7 @@ private fun LookScreen() {
             RowCard(
                 t.name,
                 "accent #" + Integer.toHexString(t.accent).takeLast(6),
-                trailing = { Box(Modifier.size(18.dp).background(t.accent, RoundedCornerShape(9.dp))) },
+                trailing = { Box(Modifier.size(18.dp).background(Color(t.accent), RoundedCornerShape(9.dp))) },
                 onTap = { themes.value = t.id; Global.themes.apply(t.id) }
             )
         }
@@ -573,7 +573,7 @@ private fun AdvancedScreen() {
                 textStyle = LocalTextStyle.current.copy(fontSize = 13.sp))
             RowCard("Save macro", null, onTap = {
                 if (macroKey.isNotBlank() && macroVal.isNotBlank()) {
-                    macros.value = macros.value + (macroKey to macroVal)
+                    macros.value = macros.value.toMutableMap().apply { put(macroKey, macroVal) }
                     prefs.writeMacros(macros.value)
                     macroKey = ""; macroVal = ""
                 }
@@ -619,6 +619,7 @@ private fun DnaSlider(label: String, value: Int, onChange: (Int) -> Unit) {
     })
 }
 
+@Composable
 private fun outlined() = OutlinedTextFieldDefaults.colors(
     focusedBorderColor = Accent, unfocusedBorderColor = CardSpecial,
     focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,

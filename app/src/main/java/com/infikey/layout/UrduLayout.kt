@@ -6,9 +6,9 @@ object UrduLayout {
     private fun navRow() = row(
         Key("⏎", action = KeyAction.ENTER, width = 1.5f),
         Key(".", width = 1f, popups = listOf("؟", "!")),
-        Key("space", label = "اردو", output = " ", action = KeyAction.SPACE, width = 4.4f),
+        Key("space", output = " ", action = KeyAction.SPACE, width = 4.4f),
         Key(",", width = 1f, popups = listOf("،")),
-        Key("\uD83C\uDF10", label = "\uD83C\uDF10", output = "globe", action = KeyAction.GLOBE, width = 1f),
+        Key("\uD83C\uDF10", output = "globe", action = KeyAction.GLOBE, width = 1f),
         Key("?123", action = KeyAction.SYMBOLS, width = 1.3f)
     )
 
