@@ -1,5 +1,7 @@
 package com.infikey.ai
 
+import org.json.JSONObject
+
 /** InfiKey persona + all task prompts. */
 object AiPrompts {
 
