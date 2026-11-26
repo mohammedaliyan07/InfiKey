@@ -778,7 +778,8 @@ private fun exportBackup(ctx: Context) {
             .put("themes", org.json.JSONArray(Global.themes.savedCodes().toList()))
             .put("learned", org.json.JSONObject().apply {
                 prefs.sp.all.entries.filter { it.key.startsWith("learned_") }.forEach { e ->
-                    put(e.key, org.json.JSONArray((e.value as? Set<*>)?.map { "$it" } ?: emptyList()))
+                    val words: List<String> = (e.value as? Set<*>)?.map { "$it" } ?: listOf()
+                    put(e.key, org.json.JSONArray(words))
                 }
             })
         val dir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
