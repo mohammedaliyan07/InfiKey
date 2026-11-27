@@ -212,7 +212,7 @@ private fun HomeScreen() {
                 "\uD83E\uDDE0 On-device AI — LFM2.5-1.2B or ANY .gguf you import, runs offline via llama.cpp",
                 "\u2601 Any cloud API — any OpenAI-compatible URL, any model, custom headers",
                 "\u270D\uFE0F 12 scripts — Hindi, Bengali, Tamil, Telugu, Kannada, Malayalam, Gujarati, Punjabi, Odia, Urdu, Santali + Latin",
-                "\u2728 85 features — glide, popups, clipboard history, macros, per-app memory, theme codes…"
+                "\u2728 87 features — glide, popups, clipboard history, macros, per-app memory, theme codes…"
             ).forEach { line ->
                 RowCard(line)
             }
@@ -302,6 +302,12 @@ private fun AiScreen() {
     val loadedPath = remember { mutableStateOf(Global.router.currentModelPath) }
     val downloading = remember { mutableStateOf(false) }
     val progress = remember { mutableStateOf(0f) }
+    // GGUF import: shows a live "copied X MB" line — copying a multi-GB file
+    // from SAF used to look frozen with just a toast
+    val importing = remember { mutableStateOf(false) }
+    val importedMb = remember { mutableStateOf(0L) }
+    // guards double "Load" taps — two llama.cpp loads at once crash the heap
+    val loadingModel = remember { mutableStateOf(false) }
     val endpoints = remember { mutableStateOf(loadEndpoints()) }
     // API key editor (#55): null = closed, CloudEndpoint() placeholder = add,
     // existing endpoint = edit (key is re-encrypted on save)
@@ -310,15 +316,41 @@ private fun AiScreen() {
     // model delete (#86): pending model waiting for confirmation
     var deleteCandidate by remember { mutableStateOf<ModelManager.LocalModel?>(null) }
 
+    fun loadModel(path: String, label: String) {
+        if (loadingModel.value) return
+        loadingModel.value = true
+        scope.launch {
+            toast(ctx, "Loading $label…")
+            val ok = withContext(Dispatchers.Default) { Global.router.loadOnDevice(path) }
+            loadingModel.value = false
+            if (ok) {
+                loadedPath.value = Global.router.currentModelPath
+                toast(ctx, "Loaded ✓")
+            } else toast(ctx, "Load failed — the file may not be a usable GGUF on this device")
+        }
+    }
+
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             scope.launch {
-                toast(ctx, "Importing…")
-                val result = withContext(Dispatchers.IO) { Global.models.importFromUri(uri) }
-                result.onSuccess {
+                importing.value = true
+                importedMb.value = 0L
+                val result = withContext(Dispatchers.IO) {
+                    Global.models.importFromUri(uri) { copied ->
+                        // snapshot writes are thread-safe; UI reads it on main
+                        importedMb.value = copied / (1024 * 1024)
+                    }
+                }
+                importing.value = false
+                result.onSuccess { m ->
                     models.value = Global.models.scan()
-                    toast(ctx, "Imported ${it.name}")
-                }.onFailure { toast(ctx, "Import failed: ${it.message}") }
+                    // import and load in one flow — the user picked the file
+                    // to USE it, not to hunt for a separate Load button
+                    loadModel(m.file.absolutePath, m.name)
+                }.onFailure {
+                    models.value = Global.models.scan()
+                    toast(ctx, "Import failed: ${it.message ?: "unknown error"}")
+                }
             }
         }
     }
@@ -340,6 +372,14 @@ private fun AiScreen() {
                         toast(ctx, "Stopping…")
                     })
                 }
+            }
+            if (importing.value) {
+                RowCard("Importing from storage…", "${importedMb.value} MB copied — keep the app open")
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    color = Accent2,
+                    trackColor = Card
+                )
             }
             RowCard(
                 "Download default model",
@@ -367,7 +407,8 @@ private fun AiScreen() {
             )
             if (Global.prefs.feature("any_gguf")) {
                 RowCard("Import any .gguf from storage", "Local, OpenRouter-style GGUFs, anything — InfiKey validates and loads it", onTap = {
-                    importLauncher.launch(arrayOf("*/*"))
+                    runCatching { importLauncher.launch(arrayOf("*/*")) }
+                        .onFailure { toast(ctx, "No file picker found on this device") }
                 })
             }
         }
@@ -378,23 +419,18 @@ private fun AiScreen() {
                     (if (m.isDefault) " · default" else ""),
                 trailing = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Load", color = Accent, fontSize = 13.sp)
+                        Text(
+                            if (loadingModel.value && m.file.absolutePath != loadedPath.value) "…"
+                            else "Load",
+                            color = Accent, fontSize = 13.sp
+                        )
                         if (Global.prefs.feature("model_delete")) {
                             Text("Delete", color = Accent2, fontSize = 13.sp,
                                 modifier = Modifier.padding(start = 12.dp).clickable { deleteCandidate = m })
                         }
                     }
                 },
-                onTap = {
-                    scope.launch {
-                        toast(ctx, "Loading ${m.name}…")
-                        val ok = Global.router.loadOnDevice(m.file.absolutePath)
-                        if (ok) {
-                            loadedPath.value = Global.router.currentModelPath
-                            toast(ctx, "Loaded ✓")
-                        } else toast(ctx, "Load failed — try a smaller model")
-                    }
-                }
+                onTap = { loadModel(m.file.absolutePath, m.name) }
             )
         }
         item {
@@ -769,27 +805,32 @@ private fun AdvancedScreen() {
     var macroVal by remember { mutableStateOf("") }
 
     val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) runCatching {
-            val text = ctx.contentResolver.openInputStream(uri)!!.bufferedReader().readText()
-            val o = org.json.JSONObject(text)
-            if (o.has("macros")) prefs.macrosJson = o.getString("macros")
-            if (o.has("facts")) prefs.factsJson = o.getString("facts")
-            if (o.has("style_dna")) prefs.styleDnaJson = o.getString("style_dna")
-            if (o.has("themes")) {
-                val a = o.getJSONArray("themes")
-                for (i in 0 until a.length()) Global.themes.addCode(a.getString(i))
-            }
-            if (o.has("learned")) {
-                val lo = o.getJSONObject("learned")
-                lo.keys().asSequence().forEach { k ->
-                    val arr = lo.getJSONArray(k)
-                    prefs.sp.edit().putStringSet(k, (0 until arr.length()).map { arr.getString(it) }.toSet()).apply()
+        if (uri != null) scope.launch {
+            runCatching {
+                // file read + parse off the main thread — large backups ANRed
+                val text = withContext(Dispatchers.IO) {
+                    ctx.contentResolver.openInputStream(uri)!!.bufferedReader().readText()
                 }
-            }
-            macros.value = prefs.readMacros()
-            dna.value = prefs.readStyleDna()
-            toast(ctx, "Backup restored ✓")
-        }.onFailure { toast(ctx, "Import failed: ${it.message}") }
+                val o = org.json.JSONObject(text)
+                if (o.has("macros")) prefs.macrosJson = o.getString("macros")
+                if (o.has("facts")) prefs.factsJson = o.getString("facts")
+                if (o.has("style_dna")) prefs.styleDnaJson = o.getString("style_dna")
+                if (o.has("themes")) {
+                    val a = o.getJSONArray("themes")
+                    for (i in 0 until a.length()) Global.themes.addCode(a.getString(i))
+                }
+                if (o.has("learned")) {
+                    val lo = o.getJSONObject("learned")
+                    lo.keys().asSequence().forEach { k ->
+                        val arr = lo.getJSONArray(k)
+                        prefs.sp.edit().putStringSet(k, (0 until arr.length()).map { arr.getString(it) }.toSet()).apply()
+                    }
+                }
+                macros.value = prefs.readMacros()
+                dna.value = prefs.readStyleDna()
+                toast(ctx, "Backup restored ✓")
+            }.onFailure { toast(ctx, "Import failed: ${it.message}") }
+        }
     }
 
     LazyColumn(Modifier.fillMaxSize()) {

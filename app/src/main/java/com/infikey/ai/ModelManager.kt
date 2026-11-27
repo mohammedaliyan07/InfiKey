@@ -72,30 +72,63 @@ class ModelManager(context: Context) {
         return null
     }
 
+    /**
+     * SAF import (Settings → AI → Import any .gguf). Copies to a .part file
+     * first, validates the GGUF magic, then renames into place — a killed
+     * import can never leave a broken model lying in the folder, and the
+     * copy progress is reported so multi-GB files don't look frozen.
+     */
     fun importFromUri(uri: Uri, onProgress: (Long) -> Unit = {}): Result<LocalModel> = runCatching {
         val resolver = appContext.contentResolver
         val suggested = queryDisplayName(uri) ?: "imported.gguf"
-        val safeName = if (suggested.endsWith(".gguf", true)) suggested else "$suggested.gguf"
+        val safeName = sanitizeModelName(suggested)
         val dst = File(modelsDir, safeName)
-        var copied = 0L
-        resolver.openInputStream(uri)!!.use { ins ->
-            dst.outputStream().use { out ->
-                val buf = ByteArray(1024 * 512)
-                while (true) {
-                    val r = ins.read(buf)
-                    if (r <= 0) break
-                    out.write(buf, 0, r)
-                    copied += r
-                    onProgress(copied)
+        // never silently overwrite an existing model with the same name
+        val unique = if (dst.exists()) {
+            val stem = dst.nameWithoutExtension
+            var i = 2
+            while (File(modelsDir, "$stem-$i.gguf").exists()) i++
+            File(modelsDir, "$stem-$i.gguf")
+        } else dst
+        val tmp = File(modelsDir, unique.name + ".part")
+        runCatching {
+            var copied = 0L
+            val ins = resolver.openInputStream(uri)
+                ?: throw IllegalStateException("storage provider refused to open that file")
+            ins.use { input ->
+                tmp.outputStream().use { out ->
+                    val buf = ByteArray(1024 * 512)
+                    while (true) {
+                        val r = input.read(buf)
+                        if (r <= 0) break
+                        out.write(buf, 0, r)
+                        copied += r
+                        onProgress(copied)
+                    }
+                    out.flush()
                 }
             }
+            val err = validate(tmp)
+            if (err != null) throw IllegalArgumentException(err)
+            if (!tmp.renameTo(unique)) {
+                // last resort on odd filesystems: copy over instead of failing
+                tmp.copyTo(unique, overwrite = true)
+                tmp.delete()
+            }
+        }.onFailure { e ->
+            runCatching { tmp.delete() }
+            throw e
         }
-        val err = validate(dst)
-        if (err != null) {
-            dst.delete()
-            throw IllegalArgumentException(err)
-        }
-        LocalModel(dst, dst.name, dst.length(), dst.name.contains(DefaultModel.NAME_MARKER, true))
+        LocalModel(unique, unique.name, unique.length(), unique.name.contains(DefaultModel.NAME_MARKER, true))
+    }
+
+    /** Strips path separators / illegal chars; guarantees a .gguf name. */
+    private fun sanitizeModelName(name: String): String {
+        val base = name.substringAfterLast('/').substringAfterLast('\\')
+            .replace(Regex("[^A-Za-z0-9 ._()\\-\\[\\]]"), "_").trim()
+            .ifBlank { "imported.gguf" }
+        val capped = base.take(120)
+        return if (capped.endsWith(".gguf", true)) capped else "$capped.gguf"
     }
 
     fun downloadTo(url: String, dst: File, onProgress: (Long, Long) -> Unit) {
