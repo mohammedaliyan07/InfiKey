@@ -73,12 +73,13 @@ private fun InfiKeySettingsApp() {
     val ctx = LocalContext.current
     var screen by remember { mutableStateOf(Screen.HOME) }
 
-    // biometric lock (#62): gate the whole settings app
+    // biometric lock (#62): gate the whole settings app; tap retries after cancel
     var unlocked by remember { mutableStateOf(!Global.prefs.biometricLock) }
-    LaunchedEffect(Unit) { if (!unlocked) unlockWithBiometric(ctx) { unlocked = true } }
+    var unlockAttempt by remember { mutableStateOf(0) }
+    LaunchedEffect(unlockAttempt) { if (!unlocked) unlockWithBiometric(ctx) { unlocked = true } }
     if (!unlocked) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("🔒 InfiKey locked — unlock to open settings", color = TextHint)
+        Box(Modifier.fillMaxSize().clickable { unlockAttempt++ }, contentAlignment = Alignment.Center) {
+            Text("🔒 InfiKey locked — unlock to open settings\n(tap to try again)", color = TextHint)
         }
         return
     }
@@ -301,6 +302,10 @@ private fun AiScreen() {
     val downloading = remember { mutableStateOf(false) }
     val progress = remember { mutableStateOf(0f) }
     val endpoints = remember { mutableStateOf(loadEndpoints()) }
+    // API key editor (#55): null = closed, CloudEndpoint() placeholder = add,
+    // existing endpoint = edit (key is re-encrypted on save)
+    var addEndpointOpen by remember { mutableStateOf(false) }
+    var editingEndpoint by remember { mutableStateOf<CloudEndpoint?>(null) }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -375,7 +380,7 @@ private fun AiScreen() {
         }
         item {
             SectionTitle("Cloud APIs (any OpenAI-compatible site)")
-            RowCard("AI mode", "current: ${prefs.aiMode}", trailing = {
+            RowCard("AI mode", "on-device ↔ cloud ↔ offline · current: ${prefs.aiMode}", trailing = {
                 Text(
                     when (prefs.aiMode) { "auto" -> "auto"; "cloud" -> "cloud"; else -> "offline" },
                     color = Accent2, fontSize = 13.sp
@@ -388,9 +393,20 @@ private fun AiScreen() {
             items(endpoints.value) { e ->
                 RowCard(
                     "${e.name} — ${e.model}",
-                    e.baseUrl,
+                    e.baseUrl + if (e.apiKey.isBlank()) " · no API key yet" else "",
                     trailing = {
-                        Text("active", color = Accent2, fontSize = 12.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (e.id == prefs.activeCloudEndpointId)
+                                Text("active", color = Accent2, fontSize = 12.sp)
+                            Text("Edit", color = Accent, fontSize = 12.sp,
+                                modifier = Modifier.padding(start = 10.dp).clickable { editingEndpoint = e })
+                            Text("\u2715", color = TextHint, fontSize = 13.sp,
+                                modifier = Modifier.padding(start = 10.dp).clickable {
+                                    endpointStore().remove(e.id)
+                                    endpoints.value = loadEndpoints()
+                                    toast(ctx, "Endpoint removed")
+                                })
+                        }
                     },
                     onTap = {
                         prefs.activeCloudEndpointId = e.id
@@ -401,30 +417,97 @@ private fun AiScreen() {
             }
             item {
                 RowCard("+ Add cloud endpoint", "Groq · OpenRouter · Ollama · LM Studio · your server — any link works", onTap = {
-                    addDemoEndpoint(ctx) { endpoints.value = loadEndpoints() }
+                    addEndpointOpen = true
                 })
             }
         }
     }
+
+    // add / edit dialog — the ONLY place an API key can be entered
+    if (addEndpointOpen) {
+        EndpointDialog(existing = null, onSave = { ep ->
+            endpointStore().upsert(ep)
+            endpoints.value = loadEndpoints()
+            addEndpointOpen = false
+            toast(ctx, "Endpoint saved — tap it to activate")
+        }, onDismiss = { addEndpointOpen = false })
+    }
+    editingEndpoint?.let { current ->
+        EndpointDialog(existing = current, onSave = { ep ->
+            endpointStore().upsert(ep)
+            endpoints.value = loadEndpoints()
+            editingEndpoint = null
+            toast(ctx, "Endpoint updated")
+        }, onDismiss = { editingEndpoint = null })
+    }
 }
 
-private fun loadEndpoints(): List<CloudEndpoint> =
-    EndpointStore({ Global.prefs.cloudEndpointsJson }, { Global.prefs.cloudEndpointsJson = it }).list()
+private fun endpointStore() = EndpointStore(
+    { Global.prefs.cloudEndpointsJson },
+    { Global.prefs.cloudEndpointsJson = it }
+)
 
-private fun addDemoEndpoint(ctx: Context, refresh: () -> Unit) {
-    // Simple inline template the user can edit in Advanced → raw prefs; real UX keeps this minimal.
-    val store = EndpointStore({ Global.prefs.cloudEndpointsJson }, { Global.prefs.cloudEndpointsJson = it })
-    store.upsert(
-        CloudEndpoint(
-            id = UUID.randomUUID().toString(),
-            name = "New endpoint",
-            baseUrl = "https://api.groq.com/openai/v1",
-            apiKey = "",
-            model = "llama-3.3-70b-versatile"
-        )
+private fun loadEndpoints(): List<CloudEndpoint> = endpointStore().list()
+
+@Composable
+private fun EndpointDialog(
+    existing: CloudEndpoint?,
+    onSave: (CloudEndpoint) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember { mutableStateOf(existing?.name ?: "") }
+    var baseUrl by remember { mutableStateOf(existing?.baseUrl ?: "https://api.groq.com/openai/v1") }
+    var apiKey by remember { mutableStateOf(existing?.apiKey ?: "") }
+    var model by remember { mutableStateOf(existing?.model ?: "") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Card,
+        titleContentColor = TextPrimary,
+        textContentColor = TextPrimary,
+        title = { Text(if (existing == null) "Add cloud endpoint" else "Edit endpoint") },
+        text = {
+            Column {
+                EndpointField(name, "name (e.g. Groq)") { name = it }
+                EndpointField(baseUrl, "base URL (OpenAI-compatible)") { baseUrl = it }
+                EndpointField(apiKey, "API key (stored encrypted on device)") { apiKey = it }
+                EndpointField(model, "model (e.g. llama-3.3-70b-versatile)") { model = it }
+                Text(
+                    "Works with Groq · OpenRouter · Together · Ollama · LM Studio · any OpenAI-compatible server",
+                    color = TextHint, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                if (baseUrl.isNotBlank() && model.isNotBlank()) {
+                    onSave(
+                        CloudEndpoint(
+                            id = existing?.id ?: UUID.randomUUID().toString(),
+                            name = name.ifBlank { "endpoint" },
+                            baseUrl = baseUrl.trim(),
+                            apiKey = apiKey.trim(), // EndpointStore encrypts before persisting
+                            model = model.trim(),
+                            headers = existing?.headers ?: emptyMap(),
+                            maxTokens = existing?.maxTokens ?: 600
+                        )
+                    )
+                }
+            }) { Text("Save", color = Accent) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = TextHint) } }
     )
-    refresh()
-    Toast.makeText(ctx, "Endpoint added — edit its key in Advanced → Cloud JSON", Toast.LENGTH_LONG).show()
+}
+
+@Composable
+private fun EndpointField(value: String, hint: String, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value, onValueChange = onChange,
+        placeholder = { Text(hint, color = TextHint) },
+        singleLine = true,
+        colors = outlined(),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        textStyle = LocalTextStyle.current.copy(fontSize = 13.sp)
+    )
 }
 
 // ---------- LOOK ----------
@@ -443,25 +526,33 @@ private fun LookScreen() {
 
     val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            runCatching { Global.fonts.importFromUri(uri).getOrThrow() }
-                .onSuccess {
+            scope.launch {
+                // file/parcel IO off the main thread
+                val result = withContext(Dispatchers.IO) { Global.fonts.importFromUri(uri) }
+                result.onSuccess {
                     prefs.fontId = it
                     fontId.value = it
                     fonts.value = Global.fonts.all()
-                }
-                .onFailure { toast(ctx, "Could not load that font") }
+                }.onFailure { toast(ctx, "Could not load that font") }
+            }
         }
     }
     val bgPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            runCatching {
-                val dst = java.io.File(ctx.filesDir, "bg_${System.currentTimeMillis()}.jpg")
-                ctx.contentResolver.openInputStream(uri)!!.use { ins ->
-                    dst.outputStream().use { ins.copyTo(it) }
-                }
-                prefs.bgImagePath = dst.absolutePath
-                bgPath.value = dst.absolutePath
-            }.onFailure { toast(ctx, "Could not use that image") }
+            scope.launch {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val dst = java.io.File(ctx.filesDir, "bg_${System.currentTimeMillis()}.jpg")
+                        ctx.contentResolver.openInputStream(uri)!!.use { ins ->
+                            dst.outputStream().use { ins.copyTo(it) }
+                        }
+                        dst.absolutePath
+                    }
+                }.onSuccess { p ->
+                    prefs.bgImagePath = p
+                    bgPath.value = p
+                }.onFailure { toast(ctx, "Could not use that image") }
+            }
         }
     }
 
@@ -532,7 +623,10 @@ private fun LookScreen() {
                         if (busyFont.isEmpty()) {
                             busyFont = label
                             scope.launch {
-                                val ok = Global.fonts.download(id, label).getOrDefault(false)
+                                // NetworkOnMainThreadException guard — download on IO
+                                val ok = withContext(Dispatchers.IO) {
+                                    Global.fonts.download(id, label).getOrDefault(false)
+                                }
                                 busyFont = ""
                                 if (ok) {
                                     prefs.fontId = id
