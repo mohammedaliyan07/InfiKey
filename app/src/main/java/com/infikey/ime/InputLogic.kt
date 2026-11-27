@@ -129,7 +129,7 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
             conn.setComposingText(composing.toString(), 1)
             return
         }
-        val before = conn.getTextBeforeCursor(12, 0) ?: ""
+        val before = conn.getTextBeforeCursor(12, 0)?.toString() ?: ""
         if (before.isEmpty()) return
         // safe grapheme delete (#19): emoji / Indic clusters stay whole when on
         val n = if (prefs.feature("cursor_cluster")) SmartText.clusterLen(before)

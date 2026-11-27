@@ -6,10 +6,20 @@ repository (the registry lives in
 and every toggleable one can be switched on/off from **InfiKey Settings → Features**.
 Features marked *off* by default are opt-in so the first-run keyboard stays clean.
 
-> **Changelog — this build (toggle wiring):** all 85 registry toggles in
+> **Changelog — this build (build fix):** part 2a introduced a Kotlin type
+> error in the new safe-grapheme backspace — `InputConnection.getTextBeforeCursor`
+> returns a `CharSequence` and was passed straight into `SmartText.clusterLen`,
+> which takes a `String`. CI failed on every commit from 2be3b47 through 82ac00a
+> (runs #14–#21) because of it. Fixed by materializing the text
+> (`?.toString() ?: ""`) before use; verified locally: `:app:compileDebugKotlin`
+> and a full `assembleDebug` (native llama.cpp included, arm64-v8a + x86_64)
+> both succeed, producing a working 28 MB debug APK. No feature behavior
+> changed — this release only restores a green build for all 85 features.
+>
+> **Changelog — toggle wiring (82ac00a):** all 85 registry toggles in
 > Settings → Features now control real behavior. `Prefs.feature()` is a central
 > resolver (toggle ↔ dedicated screen stay in sync) and `Prefs.setFeature()`
-> writes the canonical accessor. Newly wired/implemented in this build:
+> writes the canonical accessor. Newly wired/implemented in that build:
 > long-press popups, cursor drag on spacebar, spacebar trackpad fine mode,
 > swipe-up-on-space → language switch, selection mode (hold shift + slide),
 > caps-lock double-tap, swipe-to-delete wipe, number pad on numeric fields,
