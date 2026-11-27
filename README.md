@@ -13,7 +13,7 @@ InfiKey is an Android keyboard (IME) with a real AI brain built in:
 - **12 Indic scripts + transliteration** — Devanagari, Bengali, Tamil, Telugu, Kannada, Malayalam, Gujarati, Gurmukhi, Odia, Urdu (RTL), Ol Chiki, Latin. Live transliteration for 8 languages.
 - **Obsidian Aurora design** — near-black surfaces, violet-to-mint gradients, 16 dp rounded neumorphic keys, press glow. Photo backgrounds with blur + dim sliders.
 - **Fonts** — bundled families, a Google Fonts (OFL) catalog you download from inside the app, or import any `.ttf`/`.otf`.
-- **85 features** — glide typing, clipboard history, undo stack, shape gestures, macros, Field Genius chips, Style DNA, festival generator, per-app memory, elder mode, theme share codes and much more. See [docs/FEATURES.md](docs/FEATURES.md).
+- **87 features** — glide typing, clipboard history, undo stack, shape gestures, macros, Field Genius chips, Style DNA, festival generator, per-app memory, elder mode, theme share codes and much more. See [docs/FEATURES.md](docs/FEATURES.md).
 
 ## Get the APK
 
@@ -32,7 +32,7 @@ Then download the default model with one tap (AI tab → *Download default model
 
 | Doc | What's inside |
 | --- | --- |
-| [docs/FEATURES.md](docs/FEATURES.md) | All 85 features, categorized |
+| [docs/FEATURES.md](docs/FEATURES.md) | All 87 features, categorized |
 | [docs/MODELS.md](docs/MODELS.md) | Default model, any-GGUF import, folders, chat templates |
 | [docs/CLOUD.md](docs/CLOUD.md) | Connecting any cloud API from any site (examples) |
 | [docs/BUILDING.md](docs/BUILDING.md) | Building locally and on CI |

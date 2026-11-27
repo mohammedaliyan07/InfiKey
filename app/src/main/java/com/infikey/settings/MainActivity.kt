@@ -34,6 +34,7 @@ import com.infikey.ai.AiRouter
 import com.infikey.ai.CloudEndpoint
 import com.infikey.ai.DefaultModel
 import com.infikey.ai.EndpointStore
+import com.infikey.ai.ModelManager
 import com.infikey.layout.Layouts
 import com.infikey.theme.ThemeEngine
 import kotlinx.coroutines.Dispatchers
@@ -306,6 +307,8 @@ private fun AiScreen() {
     // existing endpoint = edit (key is re-encrypted on save)
     var addEndpointOpen by remember { mutableStateOf(false) }
     var editingEndpoint by remember { mutableStateOf<CloudEndpoint?>(null) }
+    // model delete (#86): pending model waiting for confirmation
+    var deleteCandidate by remember { mutableStateOf<ModelManager.LocalModel?>(null) }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -331,6 +334,12 @@ private fun AiScreen() {
                     color = Accent,
                     trackColor = Card
                 )
+                if (Global.prefs.feature("download_cancel")) {
+                    RowCard("Stop download", "Partial files are cleaned up automatically", onTap = {
+                        Global.models.cancelDownload()
+                        toast(ctx, "Stopping…")
+                    })
+                }
             }
             RowCard(
                 "Download default model",
@@ -348,7 +357,11 @@ private fun AiScreen() {
                         r.onSuccess {
                             models.value = Global.models.scan()
                             toast(ctx, "Downloaded! Tap it below to load.")
-                        }.onFailure { toast(ctx, "Download failed: ${it.message}") }
+                        }.onFailure {
+                            models.value = Global.models.scan()
+                            if (it is ModelManager.DownloadCancelledException) toast(ctx, "Download stopped")
+                            else toast(ctx, "Download failed: ${it.message}")
+                        }
                     }
                 }
             )
@@ -364,7 +377,13 @@ private fun AiScreen() {
                 "${m.sizeLabel()}${if (m.file.absolutePath == loadedPath.value) " · LOADED" else ""}" +
                     (if (m.isDefault) " · default" else ""),
                 trailing = {
-                    Text("Load", color = Accent, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Load", color = Accent, fontSize = 13.sp)
+                        if (Global.prefs.feature("model_delete")) {
+                            Text("Delete", color = Accent2, fontSize = 13.sp,
+                                modifier = Modifier.padding(start = 12.dp).clickable { deleteCandidate = m })
+                        }
+                    }
                 },
                 onTap = {
                     scope.launch {
@@ -439,6 +458,29 @@ private fun AiScreen() {
             editingEndpoint = null
             toast(ctx, "Endpoint updated")
         }, onDismiss = { editingEndpoint = null })
+    }
+
+    // delete-model confirmation (#86): the real file is removed from disk
+    deleteCandidate?.let { victim ->
+        AlertDialog(
+            onDismissRequest = { deleteCandidate = null },
+            containerColor = Card,
+            titleContentColor = TextPrimary,
+            textContentColor = TextPrimary,
+            title = { Text("Delete model") },
+            text = { Text("${victim.name} (${victim.sizeLabel()}) will be removed from storage and ${victim.sizeLabel()} freed.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    Global.router.unloadIfCurrent(victim.file.absolutePath)
+                    val ok = Global.models.delete(victim)
+                    models.value = Global.models.scan()
+                    loadedPath.value = Global.router.currentModelPath
+                    deleteCandidate = null
+                    toast(ctx, if (ok) "Deleted — ${victim.sizeLabel()} freed" else "Could not delete file")
+                }) { Text("Delete", color = Accent2) }
+            },
+            dismissButton = { TextButton(onClick = { deleteCandidate = null }) { Text("Cancel", color = TextHint) } }
+        )
     }
 }
 

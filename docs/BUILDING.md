@@ -59,7 +59,7 @@ app/src/main/
 │   ├── font/             # bundled + imported + Google-Fonts catalog
 │   ├── ime/              # IME service, input logic, suggestions, clipboard, glide
 │   ├── layout/           # 12 scripts incl. transliteration engine
-│   ├── prefs/            # 85-feature registry, settings storage, per-app memory
+│   ├── prefs/            # 87-feature registry, settings storage, per-app memory
 │   ├── settings/         # Compose UI: MainActivity, SetupActivity
 │   ├── theme/            # themes, photo backgrounds, share codes
 │   └── view/             # keyboard view, suggestion bar, AI/emoji/clipboard panels

@@ -1,12 +1,23 @@
 # FEATURES.md — the full InfiKey feature registry
 
-InfiKey ships **85 features across 6 categories**. Every feature below is real code in this
+InfiKey ships **87 features across 6 categories**. Every feature below is real code in this
 repository (the registry lives in
 [`app/src/main/java/com/infikey/prefs/Features.kt`](../app/src/main/java/com/infikey/prefs/Features.kt)),
 and every toggleable one can be switched on/off from **InfiKey Settings → Features**.
 Features marked *off* by default are opt-in so the first-run keyboard stays clean.
 
-> **Changelog — this build (build fix):** part 2a introduced a Kotlin type
+> **Changelog — this build:** the ~750 MB bundled-APK CI variant and the APK model
+> extraction were removed (models download on device); the keyboard-not-opening bug
+> was fixed by making the IME lifecycle crash-proof (each panel builds in its own
+> try/catch, the input view can no longer be killed by one broken section); cloud
+> API keys finally got a real editor (Settings → AI → + Add cloud endpoint / Edit —
+> name, base URL, key, model); **new features #86–#87**: delete downloaded models
+> (per-model Delete with confirmation, loaded model is unloaded first, disk space
+> freed) and stop/cancel an in-progress model download (partial `.part` files are
+> cleaned up). Uncaught crashes are now logged to `files/crash_log.txt` so they can
+> be reported without adb.
+>
+> **Changelog — build fix (c1a5071):** part 2a introduced a Kotlin type
 > error in the new safe-grapheme backspace — `InputConnection.getTextBeforeCursor`
 > returns a `CharSequence` and was passed straight into `SmartText.clusterLen`,
 > which takes a `String`. CI failed on every commit from 2be3b47 through 82ac00a
@@ -105,7 +116,7 @@ Gujarati, Punjabi, Odia and Urdu. See
 [`assets/dicts/SOURCES.md`](../app/src/main/assets/dicts/SOURCES.md) for sources and licenses.
 The keyboard *learns* your words on top of these (kept on-device, see [PRIVACY.md](PRIVACY.md)).
 
-## AI (20)
+## AI (22)
 
 | # | Feature | What it does | Default |
 | --- | --- | --- | --- |
@@ -129,6 +140,8 @@ The keyboard *learns* your words on top of these (kept on-device, see [PRIVACY.m
 | 58 | Safe-app list | AI never reads fields in chosen apps | on |
 | 59 | Fully offline mode | Airplane-proof on-device generation | off |
 | 60 | AI translate | Quick translate chip in the panel | off |
+| 86 | Delete downloaded models | Remove any GGUF from storage, free the space | on |
+| 87 | Stop model downloads | Cancel an in-progress download mid-way | on |
 
 ## Look & Feel (12)
 

@@ -1,6 +1,6 @@
 package com.infikey.prefs
 
-/** The full InfiKey feature registry — 85 features across 6 categories. */
+/** The full InfiKey feature registry — 87 features across 6 categories. */
 object Features {
 
     enum class Category(val label: String) {
@@ -86,6 +86,8 @@ object Features {
         FeatureDef("safe_apps", "Safe-app list", "AI never reads fields in chosen apps", Category.AI),
         FeatureDef("offline_mode", "Fully offline mode", "Airplane-proof on-device generation", Category.AI, default = false),
         FeatureDef("ai_translate", "AI translate", "Quick translate chip in the panel", Category.AI, default = false),
+        FeatureDef("model_delete", "Delete downloaded models", "Remove any GGUF from storage and free the space", Category.AI),
+        FeatureDef("download_cancel", "Stop model downloads", "Cancel an in-progress model download mid-way", Category.AI),
 
         // ---- Look & feel (61–72) ----
         FeatureDef("themes", "9 built-in aurora themes", "Obsidian Aurora, Midnight Mint, Rose Noir…", Category.LOOK),

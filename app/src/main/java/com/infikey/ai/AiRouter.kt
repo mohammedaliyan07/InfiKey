@@ -49,6 +49,16 @@ class AiRouter(private val context: Context) {
 
     fun isModelLoaded(): Boolean = fastEngine?.isReady == true
 
+    /** Frees memory when the loaded model file is deleted from disk. */
+    fun unloadIfCurrent(path: String) {
+        if (currentModelPath == path) {
+            fastEngine?.unload()
+            fastEngine = null
+            currentModelPath = ""
+            prefs.edit().putString("active_model_path", "").apply()
+        }
+    }
+
     fun setDeepEngine(engine: AiEngine) { deepEngine = engine }
 
     fun setDeepCloud(endpointId: String) {
