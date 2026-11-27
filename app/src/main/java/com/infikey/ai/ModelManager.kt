@@ -23,8 +23,9 @@ object DefaultModel {
  *  - scans the app models folder (also the folder a user can drop files into from a PC),
  *  - validates GGUF magic,
  *  - imports any .gguf from SAF,
- *  - downloads the default LFM2.5-1.2B (731 MB) with progress + mirror fallback,
- *  - extracts a model bundled in the APK (bundled CI build).
+ *  - downloads the default LFM2.5-1.2B (731 MB) with progress + mirror fallback
+ *    and cooperative cancellation ([cancelDownload]),
+ *  - deletes models from disk ([delete]).
  */
 class ModelManager(context: Context) {
 
@@ -108,6 +109,7 @@ class ModelManager(context: Context) {
                 val buf = ByteArray(1024 * 1024)
                 var copied = 0L
                 while (true) {
+                    if (cancelled) throw DownloadCancelledException(url)
                     val r = ins.read(buf)
                     if (r <= 0) break
                     out.write(buf, 0, r)
@@ -119,9 +121,26 @@ class ModelManager(context: Context) {
         if (dst.length() < 10L * 1024L * 1024L) throw IllegalStateException("download truncated")
     }
 
+    /** Raised when the user stops a download; the partial .part file is cleaned up. */
+    class DownloadCancelledException(val url: String) :
+        Exception("download cancelled")
+
+    @Volatile
+    private var cancelled = false
+
+    /** Stops any in-progress model download (stop button in Settings → AI). */
+    fun cancelDownload() {
+        cancelled = true
+    }
+
+    private fun resetCancel() {
+        cancelled = false
+    }
+
     suspend fun downloadDefault(
         onProgress: (Long, Long) -> Unit = { _, _ -> }
     ): Result<LocalModel> = runCatching {
+        resetCancel()
         val dst = File(modelsDir, DefaultModel.FILE)
         val tmp = File(modelsDir, "${DefaultModel.FILE}.part")
         try {
@@ -129,28 +148,15 @@ class ModelManager(context: Context) {
                 .onFailure { Log.w(TAG, "primary download failed, trying mirror", it) }
                 .recoverCatching { downloadTo(DefaultModel.HF_MIRROR, tmp, onProgress) }
                 .getOrThrow()
-        } finally {
+            // clean slate: replace any stale copy of the model
             runCatching { if (dst.exists()) dst.delete() }
-        }
-        tmp.renameTo(dst)
-        LocalModel(dst, dst.name, dst.length(), true)
-    }
-
-    /** Returns the file if a model was bundled inside the APK, extracted once to modelsDir. */
-    fun extractBundledIfAny(): LocalModel? {
-        val prefs = appContext.getSharedPreferences("infikey", Context.MODE_PRIVATE)
-        val marker = "bundled_extracted"
-        return runCatching {
-            val names = appContext.assets.list("models") ?: return null
-            val gguf = names.firstOrNull { it.endsWith(".gguf") } ?: return null
-            if (prefs.getBoolean(marker, false)) return scan().firstOrNull { it.name == gguf }
-            val dst = File(modelsDir, gguf)
-            appContext.assets.open("models/$gguf").use { ins ->
-                dst.outputStream().use { out -> ins.copyTo(out, 1024 * 1024) }
-            }
-            prefs.edit().putBoolean(marker, true).apply()
+            if (!tmp.renameTo(dst)) throw IllegalStateException("could not finalize download")
             LocalModel(dst, dst.name, dst.length(), true)
-        }.getOrNull()
+        } catch (t: Throwable) {
+            // cancelled or failed — never leave a partial .part file behind
+            runCatching { tmp.delete() }
+            throw t
+        }
     }
 
     fun pickDefault(): LocalModel? =

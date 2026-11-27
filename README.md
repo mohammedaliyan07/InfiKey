@@ -6,7 +6,7 @@
 
 InfiKey is an Android keyboard (IME) with a real AI brain built in:
 
-- **On-device AI** — ships with [LiquidAI LFM2.5-1.2B-Instruct](https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF) (Q4_K_M, ~731 MB) running via llama.cpp. Works with airplane mode on.
+- **On-device AI** — runs [LiquidAI LFM2.5-1.2B-Instruct](https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF) (Q4_K_M, ~731 MB, downloaded in one tap) via llama.cpp. Works with airplane mode on.
 - **Any GGUF** — import *any* GGUF model from your storage, the app folder, or a URL. InfiKey scans, validates and auto-loads it.
 - **Any cloud API** — add any OpenAI-compatible endpoint: any provider, any base URL, any model, custom headers. Groq, OpenRouter, Together, Ollama, LM Studio, your own server — all fine.
 - **AI types *into* the focused field** — even where paste is blocked. The IME commits text directly through the input connection, so AI-written content lands in ChatGPT boxes, exam apps, banking forms — anywhere.
@@ -19,9 +19,8 @@ InfiKey is an Android keyboard (IME) with a real AI brain built in:
 
 1. Open [Actions](../../actions) → **Build InfiKey APK** → latest run.
 2. Download the **InfiKey-debug-apk** artifact and install it (enable *install unknown apps*).
-3. For a build with the model **pre-installed** (no download needed on first run): run the workflow manually → use the **InfiKey-bundled-apk** artifact (~750 MB).
 
-Otherwise the app downloads the default model with one tap (Wi-Fi check included) and you can import any GGUF instead.
+Then download the default model with one tap (AI tab → *Download default model*) or import any GGUF instead.
 
 ## Setup (30 seconds)
 

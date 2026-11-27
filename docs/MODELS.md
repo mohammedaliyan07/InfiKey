@@ -64,23 +64,18 @@ Any instruct GGUF works. Practical guidance:
 Loading uses a **2048-token context** by default with CPU inference (`gpuLayers = 0`); see
 `AiRouter.loadOnDevice()`.
 
-## The bundled APK
-
-Running the **Build InfiKey APK** workflow manually (Actions → Run workflow) produces a
-second artifact: the workflow downloads the default model in CI and packs it into the APK
-(~750 MB). On first run the app extracts it from `assets/models/` into the models folder
-exactly once (tracked by a marker flag), so the phone needs no download at all.
-
 ## GGUF storage details
 
-- `gradle.properties`/`build.gradle` sets `androidResources { noCompress 'gguf' }` — GGUF
-  assets are stored uncompressed for instant mmap-style extraction.
+- Models live in the app's external files folder (`Android/data/com.infikey/files/models/`),
+  so they can be dropped in from a PC too — the list is rebuilt from the folder on every open.
 - Deleting a model deletes the real file from disk (no orphan GBs).
+- Downloads go to a temporary `.part` file first and are renamed when complete; cancelling
+  a download removes the partial file.
 - The model list is rebuilt from the folder on every open — nothing to refresh.
 
 ## Chat templates
 
-The bundled build compiles llama.cpp including its tokenizer/template handling, so Jinja
+The native build compiles llama.cpp including its tokenizer/template handling, so Jinja
 chat templates embedded in GGUF metadata are honored — instruction-tuned models answer
 correctly without manual prompt hacking. InfiKey's own prompts (`AiPrompts.kt`) are layered
 on top as system + user messages.

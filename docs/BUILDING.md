@@ -64,21 +64,21 @@ app/src/main/
 │   ├── theme/            # themes, photo backgrounds, share codes
 │   └── view/             # keyboard view, suggestion bar, AI/emoji/clipboard panels
 ├── assets/dicts/         # 11 word-frequency dictionaries (see SOURCES.md)
-└── assets/models/        # empty for normal builds; the bundled CI build packs a GGUF here
 ```
 
 ## CI (GitHub Actions)
 
-`.github/workflows/build.yml` defines two jobs:
+`.github/workflows/build.yml` defines one job:
 
 | Job | Trigger | Output |
 | --- | --- | --- |
 | **Debug APK** | every push/PR to `main` | artifact `InfiKey-debug-apk` |
-| **APK with pre-installed model** | manual `workflow_dispatch` only | artifact `InfiKey-bundled-apk` (~750 MB) |
+
+(The former ~750 MB "APK with pre-installed model" job was removed — models are
+downloaded or imported on the device, never packed into the APK.)
 
 The CI runner does exactly what a local build does: checkout → JDK 17 → Gradle 8.10.2 →
-`fetch_llama_cpp.sh` → `gradle assembleDebug`. The bundled job additionally downloads
-LFM2.5-1.2B Q4_K_M from HuggingFace into `assets/models/` before building.
+`fetch_llama_cpp.sh` → `gradle assembleDebug`.
 
 Artifacts appear on the run page under **Artifacts**; install by enabling *install unknown
 apps* for your browser/file manager.
