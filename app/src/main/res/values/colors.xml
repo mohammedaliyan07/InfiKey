@@ -10,4 +10,7 @@
     <color name="accent_violet">#8B5CF6</color>
     <color name="accent_mint">#34D399</color>
     <color name="glow">#A78BFA</color>
+
+    <!-- launcher icon: matches the icon art's own black backdrop -->
+    <color name="ic_launcher_background">#000001</color>
 </resources>
