@@ -10,12 +10,26 @@ class PerAppMemory(context: Context) {
 
     private val prefs = context.getSharedPreferences("infikey", Context.MODE_PRIVATE)
 
+    /**
+     * Self-healing read: a corrupted JSON blob (interrupted write, bad sync)
+     * used to throw here on every call — and remember() runs from the typing
+     * hot path, so it crashed the whole IME mid-word. Now the bad value is
+     * wiped once and an empty map is returned instead.
+     */
     private fun map(): MutableMap<String, Memory> {
-        val o = JSONObject(prefs.getString("per_app_memory", "{}") ?: "{}")
-        val m = mutableMapOf<String, Memory>()
-        o.keys().asSequence().forEach { pkg ->
-            val e = o.getJSONObject(pkg)
-            m[pkg] = Memory(e.optString("layout", "latin_qwerty"), e.optString("tone", ""))
+        val raw = prefs.getString("per_app_memory", "{}") ?: "{}"
+        val m = runCatching {
+            val o = JSONObject(raw)
+            val parsed = mutableMapOf<String, Memory>()
+            o.keys().asSequence().forEach { pkg ->
+                val e = o.getJSONObject(pkg)
+                parsed[pkg] = Memory(e.optString("layout", "latin_qwerty"), e.optString("tone", ""))
+            }
+            parsed
+        }.getOrElse {
+            android.util.Log.w("PerAppMemory", "corrupt per-app memory reset", it)
+            prefs.edit().putString("per_app_memory", "{}").apply()
+            mutableMapOf()
         }
         return m
     }

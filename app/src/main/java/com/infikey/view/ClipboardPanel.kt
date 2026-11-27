@@ -30,6 +30,9 @@ class ClipboardPanel(context: Context) : ScrollView(context) {
     private val list = LinearLayout(context)
 
     init {
+        // panels start hidden — the keyboard must open as JUST the keyboard;
+        // clipboard history used to render below the emoji grid on first open
+        visibility = GONE
         setBackgroundColor(theme.bg)
         addView(list, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         rebuild()

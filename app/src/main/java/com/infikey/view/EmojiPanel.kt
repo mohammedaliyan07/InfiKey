@@ -63,15 +63,26 @@ class EmojiPanel(context: Context) : LinearLayout(context) {
         return (if (recents.isNotEmpty()) listOf("Recent") else emptyList()) + CATEGORIES.keys
     }
 
+    /** One shared glyph probe: entries the device font cannot draw are hidden
+     *  instead of showing empty tofu boxes in the grid (reported bug). */
+    private val glyphPaint = android.graphics.Paint()
+
+    private fun renderable(items: List<String>): List<String> =
+        items.filter { runCatching { glyphPaint.hasGlyph(it) }.getOrDefault(true) }
+
     private fun itemsFor(index: Int): List<String> {
         val recents = com.infikey.Global.prefs.emojiRecents()
         val offset = if (recents.isNotEmpty()) 1 else 0
-        return if (index == 0 && recents.isNotEmpty()) recents
-        else CATEGORIES.values.toList()[index - offset]
+        return if (index == 0 && recents.isNotEmpty()) renderable(recents)
+        else renderable(CATEGORIES.values.toList()[index - offset])
     }
 
     init {
         orientation = VERTICAL
+        // panels start hidden — the keyboard must open as JUST the keyboard;
+        // an emoji/clipboard wall covering the app on first open was reported
+        // as "the keyboard issue" (see InfiKeyService.onCreateInputView)
+        visibility = GONE
         setBackgroundColor(theme.bg)
         setPadding((6 * d).toInt(), (6 * d).toInt(), (6 * d).toInt(), (6 * d).toInt())
 
@@ -79,10 +90,11 @@ class EmojiPanel(context: Context) : LinearLayout(context) {
         tabNames().forEachIndexed { i, name ->
             val tab = TextView(context).apply {
                 text = name
-                textSize = 12f
+                textSize = 11f
                 gravity = Gravity.CENTER
+                maxLines = 1
                 layoutParams = LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
-                setPadding((4 * d).toInt(), (8 * d).toInt(), (4 * d).toInt(), (8 * d).toInt())
+                setPadding((2 * d).toInt(), (8 * d).toInt(), (2 * d).toInt(), (8 * d).toInt())
                 setOnClickListener { selectTab(i) }
                 setTextColor(if (i == 0) theme.accent else theme.hint)
             }

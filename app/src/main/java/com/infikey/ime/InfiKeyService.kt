@@ -121,16 +121,19 @@ class InfiKeyService : InputMethodService(),
             })
         }
         aiPanel?.let {
+            it.visibility = View.GONE
             container.addView(it, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ))
         }
         emojiPanel?.let {
+            it.visibility = View.GONE
             container.addView(it, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ))
         }
         clipboardPanel?.let {
+            it.visibility = View.GONE
             container.addView(it, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ))
@@ -143,6 +146,14 @@ class InfiKeyService : InputMethodService(),
     }
 
     private val prefs get() = Global.prefs
+
+    override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
+        super.onStartInputView(info, restarting)
+        // a brand-new field starts clean: close emoji/AI/clipboard overlays so
+        // the user always lands on the keys themselves (switching to InfiKey
+        // used to open straight into a panel wall covering the app)
+        if (!restarting) runCatching { closePanels() }
+    }
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
