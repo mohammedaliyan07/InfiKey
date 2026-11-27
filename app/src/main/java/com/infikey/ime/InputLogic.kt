@@ -109,9 +109,11 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
         }
         val translitActive = prefs.translitLang.isNotEmpty() &&
             Transliteration.supports(prefs.translitLang)
+        // autocorrect runs a dictionary scan — do it once, not twice
+        val fixed = if (prefs.autoCorrect) suggestions.correct(raw) else null
         val final = when {
             translitActive -> Transliteration.translate(raw, prefs.translitLang)
-            prefs.autoCorrect && suggestions.correct(raw) != null -> suggestions.correct(raw)!!
+            fixed != null -> fixed
             else -> raw
         }
         conn.finishComposingText()

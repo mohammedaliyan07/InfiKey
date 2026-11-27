@@ -275,10 +275,20 @@ class InfiKeyService : InputMethodService(),
             }
             else -> Unit
         }
-        // remember language per app as soon as the user switches
+        // remember language per app as soon as the user switches — but only
+        // when it actually changed: per-app memory is JSON on disk, writing it
+        // on every single keypress caused avoidable main-thread IO
         val pkg = currentInputEditorInfo?.packageName?.toString().orEmpty()
-        if (pkg.isNotEmpty()) Global.perApp.remember(pkg, prefs.activeLayoutId)
+        if (pkg.isNotEmpty()) {
+            val snapshot = pkg to prefs.activeLayoutId
+            if (lastRememberedApp != snapshot) {
+                Global.perApp.remember(pkg, prefs.activeLayoutId)
+                lastRememberedApp = snapshot
+            }
+        }
     }
+
+    private var lastRememberedApp: Pair<String, String>? = null
 
     private fun handleChar(output: String) {
         when (output) {
