@@ -16,3 +16,15 @@ app/src/main/assets/models/*.gguf
 *.aab
 *.keystore
 !debug.keystore
+
+# sandbox-only dirs, never commit
+/gradle-home/
+/sdk/
+/download/
+/upload/
+/scripts/
+/skills/
+/tool-results/
+/infikey-fixes/
+/tools/
+Icon?
