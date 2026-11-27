@@ -403,6 +403,9 @@ class AiPanel(context: Context) : LinearLayout(context) {
 
     fun destroy() {
         scope.cancel()
+        tts?.shutdown()
+        tts = null
+        ttsReady = false
     }
 
     fun setTypeface(tf: Typeface?) = setTypefaceAll(tf)

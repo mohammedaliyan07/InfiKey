@@ -3,6 +3,7 @@ package com.infikey.ime
 import android.content.Intent
 import android.inputmethodservice.InputMethodService
 import android.os.Bundle
+import android.util.Log
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -38,16 +39,20 @@ class InfiKeyService : InputMethodService(),
         private const val MODE_LETTERS = 0
         private const val MODE_SYM1 = 1
         private const val MODE_SYM2 = 2
+        private const val TAG = "InfiKeyService"
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    private lateinit var root: LinearLayout
-    private lateinit var keyboardView: KeyboardView
-    private lateinit var suggestionBar: SuggestionBar
-    private lateinit var aiPanel: AiPanel
-    private lateinit var emojiPanel: EmojiPanel
-    private lateinit var clipboardPanel: ClipboardPanel
+    // Panels are nullable and built independently: a crash in one panel's
+    // constructor must never leave the user with NO keyboard when they switch
+    // to InfiKey (reported bug — keyboard "doesn't even open").
+    private var root: LinearLayout? = null
+    private var keyboardView: KeyboardView? = null
+    private var suggestionBar: SuggestionBar? = null
+    private var aiPanel: AiPanel? = null
+    private var emojiPanel: EmojiPanel? = null
+    private var clipboardPanel: ClipboardPanel? = null
     private lateinit var inputLogic: InputLogic
 
     private val glide = GlideTracker()
@@ -65,6 +70,8 @@ class InfiKeyService : InputMethodService(),
 
     override fun onCreate() {
         super.onCreate()
+        // re-arm singletons when the process is recreated for a direct IME bind
+        (application as? com.infikey.InfiKeyApp)?.let { runCatching { Global.init(it) } }
         inputLogic = InputLogic(Global.prefs, Global.suggestions)
         // clipboard history (#73): watch the system clipboard while InfiKey runs
         val cm = getSystemService(android.content.ClipboardManager::class.java)
@@ -76,63 +83,96 @@ class InfiKeyService : InputMethodService(),
     }
 
     override fun onCreateInputView(): View {
-        Global.themes // ensure singletons are alive after process death
-        root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root = container
 
-        suggestionBar = SuggestionBar(this).apply { callbacks = this@InfiKeyService }
-        keyboardView = KeyboardView(this).apply {
-            callbacks = this@InfiKeyService
+        // every section is built inside its own runCatching — one broken panel
+        // is skipped instead of killing the whole input view
+        suggestionBar = runCatching {
+            SuggestionBar(this).apply { callbacks = this@InfiKeyService }
+        }.onFailure { Log.w(TAG, "suggestion bar unavailable", it) }.getOrNull()
+        keyboardView = runCatching {
+            KeyboardView(this).apply { callbacks = this@InfiKeyService }
+        }.onFailure { Log.e(TAG, "keyboard surface failed", it) }.getOrNull()
+        aiPanel = runCatching {
+            AiPanel(this).apply { callbacks = this@InfiKeyService }
+        }.onFailure { Log.w(TAG, "AI panel unavailable", it) }.getOrNull()
+        emojiPanel = runCatching {
+            EmojiPanel(this).apply { callbacks = this@InfiKeyService }
+        }.onFailure { Log.w(TAG, "emoji panel unavailable", it) }.getOrNull()
+        clipboardPanel = runCatching {
+            ClipboardPanel(this).apply { callbacks = this@InfiKeyService }
+        }.onFailure { Log.w(TAG, "clipboard panel unavailable", it) }.getOrNull()
+
+        suggestionBar?.let {
+            container.addView(it, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
         }
-        aiPanel = AiPanel(this).apply { callbacks = this@InfiKeyService }
-        emojiPanel = EmojiPanel(this).apply { callbacks = this@InfiKeyService }
-        clipboardPanel = ClipboardPanel(this).apply { callbacks = this@InfiKeyService }
+        if (keyboardView != null) {
+            container.addView(keyboardView, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        } else {
+            // absolute fallback so the IME window still opens with something in it
+            container.addView(android.widget.TextView(this).apply {
+                text = "InfiKey could not start its keyboard — please report this crash"
+                setPadding(0, 40, 0, 40)
+            })
+        }
+        aiPanel?.let {
+            container.addView(it, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+        emojiPanel?.let {
+            container.addView(it, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+        clipboardPanel?.let {
+            container.addView(it, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
 
-        root.addView(suggestionBar)
-        root.addView(keyboardView)
-        root.addView(aiPanel, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-        ))
-        root.addView(emojiPanel, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-        ))
-        root.addView(clipboardPanel, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-        ))
-
-        applyLayout(prefs.activeLayoutId)
-        keyboardView.refreshTypeface()
-        return root
+        runCatching { applyLayout(prefs.activeLayoutId) }
+            .onFailure { Log.w(TAG, "layout apply failed", it) }
+        keyboardView?.refreshTypeface()
+        return container
     }
 
     private val prefs get() = Global.prefs
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
-        inputLogic.attach(currentInputConnection, keepComposing = restarting)
-        val pkg = attribute?.packageName?.toString() ?: ""
-        fieldInfo = FieldGenius.analyse(
-            attribute, pkg,
-            FieldGenius.labelFromExtras(attribute?.extras)
-        )
-        // incognito: password/phone fields + safe apps learn & store nothing (#12, #77)
-        val protectedField = fieldInfo?.kind?.privacy == FieldGenius.Privacy.BLOCKED ||
-            (pkg.isNotEmpty() && pkg in prefs.safeApps)
-        inputLogic.incognito = protectedField
+        // a misbehaving editor (bad extras, exotic inputType) must never take
+        // down the input session — degrade instead of crashing the IME
+        runCatching {
+            inputLogic.attach(currentInputConnection, keepComposing = restarting)
+            val pkg = attribute?.packageName?.toString() ?: ""
+            fieldInfo = FieldGenius.analyse(
+                attribute, pkg,
+                FieldGenius.labelFromExtras(attribute?.extras)
+            )
+            // incognito: password/phone fields + safe apps learn & store nothing (#12, #77)
+            val protectedField = fieldInfo?.kind?.privacy == FieldGenius.Privacy.BLOCKED ||
+                (pkg.isNotEmpty() && pkg in prefs.safeApps)
+            inputLogic.incognito = protectedField
 
-        // per-app memory: restore language automatically
-        if (prefs.perAppAuto && pkg.isNotEmpty()) {
-            Global.perApp.get(pkg)?.let { mem ->
-                if (mem.layoutId != prefs.activeLayoutId) {
-                    prefs.activeLayoutId = mem.layoutId
-                    Global.suggestions.loadForLayout(mem.layoutId)
-                    if (::keyboardView.isInitialized) applyLayout(mem.layoutId)
+            // per-app memory: restore language automatically
+            if (prefs.perAppAuto && pkg.isNotEmpty()) {
+                Global.perApp.get(pkg)?.let { mem ->
+                    if (mem.layoutId != prefs.activeLayoutId) {
+                        prefs.activeLayoutId = mem.layoutId
+                        Global.suggestions.loadForLayout(mem.layoutId)
+                        applyLayout(mem.layoutId)
+                    }
                 }
             }
-        }
-        Global.suggestions.loadForLayout(prefs.activeLayoutId)
+            Global.suggestions.loadForLayout(prefs.activeLayoutId)
 
-        // dedicated number pad (#15): swap in the keypad for numeric fields
-        if (::keyboardView.isInitialized) {
+            // dedicated number pad (#15): swap in the keypad for numeric fields
             val numeric = fieldInfo?.kind == FieldGenius.Kind.NUMBER ||
                 fieldInfo?.kind == FieldGenius.Kind.PHONE
             if (numeric && prefs.feature("numpad") && !showingNumpad) {
@@ -140,8 +180,8 @@ class InfiKeyService : InputMethodService(),
             } else if ((!numeric || !prefs.feature("numpad")) && showingNumpad) {
                 applyLayout(prefs.activeLayoutId)
             }
-        }
-        updateSuggestions()
+            updateSuggestions()
+        }.onFailure { Log.w(TAG, "onStartInput degraded", it) }
     }
 
     override fun onFinishInput() {
@@ -156,9 +196,9 @@ class InfiKeyService : InputMethodService(),
     private fun applyLayout(id: String, persist: Boolean = true) {
         mode = MODE_LETTERS
         val layout = Layouts.byId(id)
-        keyboardView.setLayout(layout)
-        keyboardView.setCapsState(shiftOn, capsLocked)
-        keyboardView.setOneHanded(prefs.oneHanded)
+        keyboardView?.setLayout(layout)
+        keyboardView?.setCapsState(shiftOn, capsLocked)
+        keyboardView?.setOneHanded(prefs.oneHanded)
         showingNumpad = id == com.infikey.layout.Layouts.NUMPAD
         if (persist) prefs.activeLayoutId = id
         Global.suggestions.loadForLayout(id)
@@ -172,7 +212,7 @@ class InfiKeyService : InputMethodService(),
     }
 
     override fun onGlideMove(x: Float, y: Float) {
-        glide.move(x, y, System.currentTimeMillis()) { gx, gy -> keyboardView.letterUnder(gx, gy) }
+        glide.move(x, y, System.currentTimeMillis()) { gx, gy -> keyboardView?.letterUnder(gx, gy) }
     }
 
     override fun onGlideEnd(cancelled: Boolean) {
@@ -182,7 +222,7 @@ class InfiKeyService : InputMethodService(),
         val best = scored.firstOrNull()
         if (best != null) {
             inputLogic.acceptSuggestion(best)
-            suggestionBar.showSuggestions(scored)
+            suggestionBar?.showSuggestions(scored)
         }
     }
 
@@ -220,10 +260,10 @@ class InfiKeyService : InputMethodService(),
             KeyAction.ALPHABET -> applyLayout(prefs.activeLayoutId)
             KeyAction.GLOBE -> cycleLayout()
             KeyAction.EMOJI -> togglePanel(emojiPanel)
-            KeyAction.CLIPBOARD -> { clipboardPanel.rebuild(); togglePanel(clipboardPanel) }
+            KeyAction.CLIPBOARD -> { clipboardPanel?.rebuild(); togglePanel(clipboardPanel) }
             // AI chat panel (#42): the whole overlay honours its feature toggle
             KeyAction.AI -> if (prefs.feature("ai_chat")) {
-                if (aiPanel.isOpen()) aiPanel.close() else { closePanels(); aiPanel.open() }
+                if (aiPanel?.isOpen() == true) aiPanel?.close() else { closePanels(); aiPanel?.open() }
             }
             KeyAction.SETTINGS -> openSettings()
             KeyAction.VOICE -> startVoice()
@@ -268,7 +308,7 @@ class InfiKeyService : InputMethodService(),
         }
         if (!shiftOn) selAnchor = -1
         lastShiftTap = now
-        keyboardView.setCapsState(shiftOn, capsLocked)
+        keyboardView?.setCapsState(shiftOn, capsLocked)
     }
 
     private fun handleSpace() {
@@ -288,7 +328,7 @@ class InfiKeyService : InputMethodService(),
     }
 
     private fun showSymbolsPage(page: List<com.infikey.layout.KeyboardRow>) {
-        keyboardView.setLayout(
+        keyboardView?.setLayout(
             com.infikey.layout.Layout(
                 id = "_symbols_$mode", name = "Symbols", script = "Symbols",
                 hasCase = false, main = page
@@ -337,12 +377,13 @@ class InfiKeyService : InputMethodService(),
     }
 
     private fun closePanels() {
-        emojiPanel.visibility = View.GONE
-        clipboardPanel.visibility = View.GONE
-        aiPanel.close()
+        emojiPanel?.visibility = View.GONE
+        clipboardPanel?.visibility = View.GONE
+        aiPanel?.close()
     }
 
-    private fun togglePanel(panel: View) {
+    private fun togglePanel(panel: View?) {
+        if (panel == null) return
         val showing = panel.visibility == View.VISIBLE
         closePanels()
         panel.visibility = if (showing) View.GONE else View.VISIBLE
@@ -358,11 +399,12 @@ class InfiKeyService : InputMethodService(),
     // ---- suggestions ----
 
     private fun updateSuggestions() {
+        val bar = suggestionBar ?: return
         val word = inputLogic.composingText()
         val list = Global.suggestions.suggest(word, inputLogic.previousWord(), 3)
-        suggestionBar.showSuggestions(list)
+        bar.showSuggestions(list)
         contextChips = buildContextChips(word)
-        suggestionBar.showContextChip(contextChips.firstOrNull()?.first)
+        bar.showContextChip(contextChips.firstOrNull()?.first)
     }
 
     private var contextChips: List<Pair<String, String?>> = emptyList()
@@ -391,7 +433,7 @@ class InfiKeyService : InputMethodService(),
 
     override fun onShape(shape: String) {
         when (shape) {
-            "caret" -> if (prefs.feature("ai_chat")) { closePanels(); aiPanel.open() }
+            "caret" -> if (prefs.feature("ai_chat")) { closePanels(); aiPanel?.open() }
             "circle" -> {
                 val ic = currentInputConnection ?: return
                 val all = ic.getExtractedText(ExtractedTextRequest(), 0)?.text?.toString() ?: return
@@ -464,7 +506,7 @@ class InfiKeyService : InputMethodService(),
     override fun onAiTap() = onKey("ai", KeyAction.AI)
 
     override fun onClipboardTap() {
-        clipboardPanel.rebuild()
+        clipboardPanel?.rebuild()
         togglePanel(clipboardPanel)
     }
 
@@ -492,7 +534,7 @@ class InfiKeyService : InputMethodService(),
 
     override fun onAskAi(text: String) {
         togglePanel(clipboardPanel)
-        aiPanel.runExternalTask(com.infikey.ai.AiPrompts.tldr(text))
+        aiPanel?.runExternalTask(com.infikey.ai.AiPrompts.tldr(text))
     }
 
     // ---- AI panel callbacks ----
@@ -561,6 +603,7 @@ class InfiKeyService : InputMethodService(),
 
     override fun onDestroy() {
         speech?.destroy()
+        aiPanel?.destroy() // stop streaming coroutines + TTS when the IME dies
         getSystemService(android.content.ClipboardManager::class.java)
             ?.removePrimaryClipChangedListener(clipListener)
         super.onDestroy()
@@ -568,9 +611,9 @@ class InfiKeyService : InputMethodService(),
 
     override fun onWindowShown() {
         super.onWindowShown()
-        if (::keyboardView.isInitialized) {
-            keyboardView.refreshTypeface()
-            keyboardView.setOneHanded(prefs.oneHanded)
+        if (keyboardView != null) {
+            keyboardView?.refreshTypeface()
+            keyboardView?.setOneHanded(prefs.oneHanded)
         }
     }
 }
