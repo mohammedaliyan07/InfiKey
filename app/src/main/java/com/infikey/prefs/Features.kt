@@ -79,7 +79,7 @@ object Features {
         FeatureDef("style_dna", "Style DNA", "3 sliders that lock your voice into every output", Category.AI),
         FeatureDef("read_aloud", "Read aloud before send", "Hear the draft before you commit it", Category.AI, default = false),
         FeatureDef("multi_model_router", "Multi-model routing", "Fast model for fixes, deep model for essays", Category.AI),
-        FeatureDef("any_gguf", "Any-GGUF import", "Import any GGUF: storage, folder, or URL", Category.AI),
+        FeatureDef("any_gguf", "Any-GGUF import", "Import any GGUF: storage or folder", Category.AI),
         FeatureDef("cloud_any", "Any-site cloud API", "Any OpenAI-compatible URL — any provider", Category.AI),
         FeatureDef("per_app_tone", "Per-app AI tone", "Formal at work, casual in chats", Category.AI, default = false),
         FeatureDef("ai_log", "AI transparency log", "See exactly what was sent to AI, when", Category.AI),

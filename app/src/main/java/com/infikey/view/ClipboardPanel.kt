@@ -24,6 +24,10 @@ class ClipboardPanel(context: Context) : ScrollView(context) {
     }
     var callbacks: Callbacks? = null
 
+    /** Non-null while a snippet is being edited; the keyboard types into it. */
+    var editor: android.widget.EditText? = null
+        private set
+
     private val theme get() = ThemeEngine(context).current()
     private val prefs = Global.prefs
     private val d = resources.displayMetrics.density
@@ -38,7 +42,45 @@ class ClipboardPanel(context: Context) : ScrollView(context) {
         rebuild()
     }
 
+    fun closeEditor() {
+        if (editor != null) rebuild()
+    }
+
+    /** Edits a snippet in place: a dialog cannot be typed into from its own keyboard. */
+    private fun showEditor(snippet: String) {
+        list.removeAllViews()
+        val box = android.widget.EditText(context).apply {
+            setText(snippet)
+            setSelection(length())
+            setTextColor(theme.text)
+            maxLines = 4
+            showSoftInputOnFocus = false
+        }
+        list.addView(box, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        val buttons = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+        fun action(label: String, onTap: () -> Unit) = TextView(context).apply {
+            this.text = label
+            textSize = 14f
+            setTextColor(theme.accent)
+            setPadding((14 * d).toInt(), (10 * d).toInt(), (14 * d).toInt(), (10 * d).toInt())
+            setOnClickListener { onTap() }
+        }
+        buttons.addView(action("Paste") {
+            val edited = box.text.toString()
+            editor = null
+            setClip(edited)
+            rebuild()
+            callbacks?.onPaste(edited)
+        })
+        buttons.addView(action("Cancel") { rebuild() })
+        list.addView(buttons)
+        editor = box
+        box.requestFocus()
+        scrollTo(0, 0)
+    }
+
     fun rebuild() {
+        editor = null
         list.removeAllViews()
         list.setPadding((8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt())
         list.orientation = LinearLayout.VERTICAL
@@ -75,7 +117,10 @@ class ClipboardPanel(context: Context) : ScrollView(context) {
                 "telugu" to "→ తెలుగు", "bengali" to "→ বাংলা", "gujarati" to "→ ગુજરાતી", "gurmukhi" to "→ ਪੰਜਾਬੀ")) {
             if (prefs.feature("clipboard_translate")) tools.addView(tool(label) { callbacks?.onToScript(top!!.text, lang) })
         }
-        list.addView(tools)
+        list.addView(android.widget.HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(tools)
+        })
 
         val entries = runCatching { Global.clipboard.all() }.getOrDefault(emptyList())
         if (entries.isEmpty()) {
@@ -126,19 +171,7 @@ class ClipboardPanel(context: Context) : ScrollView(context) {
                 textSize = 14f
                 setTextColor(theme.hint)
                 setPadding((10 * d).toInt(), 0, (4 * d).toInt(), 0)
-                setOnClickListener {
-                    val box = android.widget.EditText(context).apply { setText(e.text) }
-                    android.app.AlertDialog.Builder(context)
-                        .setTitle("Edit before paste")
-                        .setView(box)
-                        .setPositiveButton("Paste") { _, _ ->
-                            val t = box.text.toString()
-                            setClip(t)
-                            callbacks?.onPaste(t)
-                        }
-                        .setNegativeButton("Cancel", null)
-                        .show()
-                }
+                setOnClickListener { showEditor(e.text) }
             }
             row.addView(edit)
         }

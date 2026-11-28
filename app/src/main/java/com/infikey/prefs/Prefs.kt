@@ -84,8 +84,10 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("elder_mode", false)
         set(v) = sp.edit().putBoolean("elder_mode", v).apply()
 
-    var translitLang: String   // "" = off, else hi/bn/ta/te/kn/ml/gu/pa
-        get() = sp.getString("translit_lang", "") ?: ""
+    var translitLang: String   // "" = off, else a script layout id such as devanagari
+        get() = (sp.getString("translit_lang", "") ?: "").let {
+            if (it == "hi") "devanagari" else it // older builds stored the language code
+        }
         set(v) = sp.edit().putString("translit_lang", v).apply()
 
     // ---- Languages ----
@@ -195,7 +197,7 @@ class Prefs(context: Context) {
             "one_handed" -> oneHanded = if (v) "right" else "off"
             "clipboard_history" -> clipboardHistoryEnabled = v
             "elder_mode" -> elderMode = v
-            "translit" -> if (v) { if (translitLang.isEmpty()) translitLang = "hi" } else translitLang = ""
+            "translit" -> if (v) { if (translitLang.isEmpty()) translitLang = "devanagari" } else translitLang = ""
             "per_app_lang" -> perAppAuto = v
             "auto_emoji" -> autoEmoji = v
             "idle_egg" -> idleEasterEgg = v

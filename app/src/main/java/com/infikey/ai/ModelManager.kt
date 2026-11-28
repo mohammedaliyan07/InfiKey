@@ -137,6 +137,7 @@ class ModelManager(context: Context) {
         conn.readTimeout = 60_000
         conn.instanceFollowRedirects = true
         val total = conn.contentLengthLong
+        var received = 0L
         conn.inputStream.use { ins ->
             dst.outputStream().use { out ->
                 val buf = ByteArray(1024 * 1024)
@@ -147,11 +148,12 @@ class ModelManager(context: Context) {
                     if (r <= 0) break
                     out.write(buf, 0, r)
                     copied += r
+                    received = copied
                     if (total > 0) onProgress(copied, total)
                 }
             }
         }
-        if (dst.length() < 10L * 1024L * 1024L) throw IllegalStateException("download truncated")
+        if ((total > 0 && received != total) || dst.length() < 10L * 1024L * 1024L) throw IllegalStateException("download truncated")
     }
 
     /** Raised when the user stops a download; the partial .part file is cleaned up. */

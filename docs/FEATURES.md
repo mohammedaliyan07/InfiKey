@@ -133,7 +133,7 @@ The keyboard *learns* your words on top of these (kept on-device, see [PRIVACY.m
 | 51 | Style DNA | 3 sliders that lock your voice into every output | on |
 | 52 | Read aloud before send | Hear the draft before you commit it | off |
 | 53 | Multi-model routing | Fast model for fixes, deep model for essays | on |
-| 54 | Any-GGUF import | Import any GGUF: storage, folder, or URL | on |
+| 54 | Any-GGUF import | Import any GGUF: storage or folder | on |
 | 55 | Any-site cloud API | Any OpenAI-compatible URL — any provider | on |
 | 56 | Per-app AI tone | Formal at work, casual in chats | off |
 | 57 | AI transparency log | See exactly what was sent to AI, when | on |

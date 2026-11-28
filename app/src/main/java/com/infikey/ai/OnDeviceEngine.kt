@@ -1,6 +1,7 @@
 package com.infikey.ai
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -15,7 +16,11 @@ class OnDeviceEngine(
     private val gpuLayers: Int = 0
 ) : AiEngine {
 
+    @Volatile
     private var handle = 0L
+
+    /** The native context handles one generation at a time and must not be freed mid-run. */
+    private val lock = Any()
     private var chatTemplate: String? = null
 
     override val id = "on-device:$modelPath"
@@ -37,9 +42,12 @@ class OnDeviceEngine(
     }
 
     fun unload() {
-        if (handle != 0L) {
-            LlamaBridge.nativeFree(handle)
-            handle = 0L
+        cancel() // stop a running generation so the lock is released quickly
+        synchronized(lock) {
+            if (handle != 0L) {
+                LlamaBridge.nativeFree(handle)
+                handle = 0L
+            }
         }
     }
 
@@ -55,17 +63,23 @@ class OnDeviceEngine(
         val prompt = ChatTemplates.apply(chatTemplate, modelPath.substringAfterLast('/'), messages)
         val sb = StringBuilder()
         val stop = opts.stop.firstOrNull()
-        withContext(Dispatchers.Default) {
-            LlamaBridge.nativeGenerate(
-                handle, prompt, opts.maxTokens, opts.temperature, opts.topP, opts.topK,
-                stop, LlamaBridge.TokenCallback { tok ->
-                    sb.append(tok)
-                    onTokenListener?.invoke(tok)
-                    true
-                }
-            )
-        }
+        val listener = onTokenListener
         onTokenListener = null
+        withContext(Dispatchers.Default) {
+            val job = coroutineContext[Job]
+            synchronized(lock) {
+                check(handle != 0L) { "model was unloaded" }
+                val ok = LlamaBridge.nativeGenerate(
+                    handle, prompt, opts.maxTokens, opts.temperature, opts.topP, opts.topK,
+                    stop, LlamaBridge.TokenCallback { tok ->
+                        sb.append(tok)
+                        listener?.invoke(tok)
+                        job?.isActive != false // closing the panel stops generation
+                    }
+                )
+                check(ok || sb.isNotEmpty()) { "generation failed — the text may be too long for this model" }
+            }
+        }
         return sb.toString().trim()
     }
 

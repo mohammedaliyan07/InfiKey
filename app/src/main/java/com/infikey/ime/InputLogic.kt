@@ -25,6 +25,9 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
     @Volatile
     var incognito: Boolean = false
 
+    /** Password/PIN fields: type exactly what was tapped, with no composing or correction. */
+    var literal: Boolean = false
+
     /** #45 — script of the last committed word (layout id or null). */
     var lastScriptHint: String? = null
 
@@ -84,19 +87,23 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
     /** A letter key was pressed. */
     fun appendLetter(c: String) {
         val conn = ic ?: return
-        val translitActive = prefs.translitLang.isNotEmpty() &&
-            Layouts.byId(prefs.translitLang).let { Transliteration.supports(it.id) }
+        if (literal) {
+            conn.commitText(c, 1)
+            return
+        }
         if (composing.length >= MAX_COMPOSING) {
             finishComposing()
         }
         composing.append(c)
-        if (translitActive && composing.any { it.isLetter() && it.code < 0x0900 }) {
-            // live preview: show transliterated output under the cursor
-            val preview = Transliteration.translate(composing.toString(), prefs.translitLang)
-            conn.setComposingText(preview, 1)
-        } else {
-            conn.setComposingText(composing.toString(), 1)
-        }
+        conn.setComposingText(preview(), 1)
+    }
+
+    /** What the composing region shows: transliterated when that mode is on. */
+    private fun preview(): String {
+        val raw = composing.toString()
+        return if (Transliteration.supports(prefs.translitLang) &&
+            raw.any { it.isLetter() && it.code < 0x0900 }
+        ) Transliteration.translate(raw, prefs.translitLang) else raw
     }
 
     /** Space / punctuation ends the current word: applies autocorrect + translit commit. */
@@ -104,21 +111,25 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
         val conn = ic ?: return
         val raw = composing.toString()
         if (raw.isEmpty()) {
-            ic?.commitText(replacement, 1)
+            // committing "" would erase a selection, so skip it
+            if (replacement.isNotEmpty()) ic?.commitText(replacement, 1)
             return
         }
         val translitActive = prefs.translitLang.isNotEmpty() &&
             Transliteration.supports(prefs.translitLang)
         // autocorrect runs a dictionary scan — do it once, not twice
-        val fixed = if (prefs.autoCorrect) suggestions.correct(raw) else null
+        // punctuation is set aside first so "hello." keeps its full stop
+        val word = TextRules.splitWord(raw)
+        val fixed = if (!translitActive && prefs.autoCorrect && TextRules.isCorrectable(word.core))
+            suggestions.correct(word.core)?.let { TextRules.matchCase(word.core, it) } else null
+        val core = fixed ?: word.core
         val final = when {
             translitActive -> Transliteration.translate(raw, prefs.translitLang)
-            fixed != null -> fixed
-            else -> raw
+            else -> word.lead + core + word.trail
         }
         conn.finishComposingText()
         ic?.commitText(final, 1)
-        commitToHistory(final)
+        commitToHistory(if (translitActive) TextRules.splitWord(final).core else core)
         composing.clear()
         if (replacement.isNotEmpty()) ic?.commitText(replacement, 1)
     }
@@ -128,9 +139,10 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
         val conn = ic ?: return
         if (composing.isNotEmpty()) {
             composing.deleteCharAt(composing.length - 1)
-            conn.setComposingText(composing.toString(), 1)
+            conn.setComposingText(preview(), 1)
             return
         }
+        if (deleteSelection(conn)) return
         val before = conn.getTextBeforeCursor(12, 0)?.toString() ?: ""
         if (before.isEmpty()) return
         // safe grapheme delete (#19): emoji / Indic clusters stay whole when on
@@ -147,12 +159,32 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
             conn.setComposingText("", 1)
             return
         }
+        if (deleteSelection(conn)) return
         val before = conn.getTextBeforeCursor(80, 0) ?: ""
         val trimmed = before.trimEnd()
         val cut = before.length - trimmed.length // trailing spaces to remove
         val wordLen = trimmed.length - (trimmed.lastIndexOfAny(charArrayOf(' ', '\n', '\t')) + 1)
         if (wordLen > 0) pushUndo(trimmed.substring(trimmed.length - wordLen))
         conn.deleteSurroundingText(wordLen + cut, 0)
+    }
+
+    private fun deleteSelection(conn: InputConnection): Boolean {
+        val selected = conn.getSelectedText(0)
+        if (selected.isNullOrEmpty()) return false
+        pushUndo(selected.toString())
+        conn.commitText("", 1)
+        return true
+    }
+
+    /** Second tap of a double space: "word " becomes "word. ". */
+    fun doubleSpacePeriod(): Boolean {
+        val conn = ic ?: return false
+        if (literal || composing.isNotEmpty()) return false
+        val before = conn.getTextBeforeCursor(3, 0)?.toString() ?: return false
+        if (!TextRules.doubleSpaceApplies(before)) return false
+        conn.deleteSurroundingText(1, 0)
+        conn.commitText(". ", 1)
+        return true
     }
 
     /** ENTER after "1. " or "- " continues the list automatically (#33). */
@@ -173,12 +205,7 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
     /** Accepts a suggestion, replacing the composing word. */
     fun acceptSuggestion(word: String) {
         val conn = ic ?: return
-        val wasComposing = composing.isNotEmpty()
-        conn.finishComposingText()
-        if (wasComposing) {
-            // remove raw composing text, insert suggestion
-            conn.deleteSurroundingText(composing.length, 0)
-        }
+        // commitText replaces the composing region, whatever its on-screen length
         composing.clear()
         ic?.commitText(word, 1)
         commitToHistory(word)
@@ -188,6 +215,7 @@ class InputLogic(private val prefs: Prefs, private val suggestions: SuggestionEn
     fun shouldAutoCap(): Boolean {
         val conn = ic ?: return false
         val before = conn.getTextBeforeCursor(3, 0) ?: return false
+        if (literal) return false
         if (before.isEmpty()) return true
         val trimmed = before.trimEnd()
         if (trimmed.isEmpty()) return true

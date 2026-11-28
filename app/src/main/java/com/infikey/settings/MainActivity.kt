@@ -12,6 +12,7 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.fragment.app.FragmentActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -50,7 +51,35 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Global.init(applicationContext as com.infikey.InfiKeyApp)
+        if (savedInstanceState == null) importOpenedFile(intent)
         setContent { InfiKeySettingsApp() }
+    }
+
+    /** "Open with InfiKey" from Files or a browser: import a .gguf model or a font. */
+    private fun importOpenedFile(intent: Intent?) {
+        val uri = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data ?: return
+        lifecycleScope.launch {
+            val message = withContext(Dispatchers.IO) {
+                runCatching {
+                    val name = (contentResolver.query(uri, null, null, null, null)?.use { c ->
+                        val i = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (i >= 0 && c.moveToFirst()) c.getString(i) else null
+                    } ?: uri.lastPathSegment.orEmpty()).lowercase()
+                    when {
+                        name.endsWith(".gguf") -> {
+                            val model = Global.models.importFromUri(uri).getOrThrow()
+                            "Imported ${model.name} — load it in the AI tab"
+                        }
+                        name.endsWith(".ttf") || name.endsWith(".otf") -> {
+                            Global.prefs.fontId = Global.fonts.importFromUri(uri).getOrThrow()
+                            "Font imported and selected"
+                        }
+                        else -> "InfiKey can only open .gguf, .ttf and .otf files"
+                    }
+                }.getOrElse { "Import failed: ${it.message}" }
+            }
+            toast(this@MainActivity, message)
+        }
     }
 }
 
@@ -179,6 +208,13 @@ private fun HomeScreen() {
     val imeEnabled = remember { mutableStateOf(isImeEnabled(ctx)) }
     val imeSelected = remember { mutableStateOf(isImeSelected(ctx)) }
     val modelLoaded = remember { mutableStateOf(runCatching { Global.router.isModelLoaded() }.getOrDefault(false)) }
+
+    LaunchedEffect(Unit) {
+        runCatching {
+            Global.router.ensureLoaded()
+            modelLoaded.value = Global.router.isModelLoaded()
+        }
+    }
 
     LazyColumn(Modifier.fillMaxSize()) {
         item {
@@ -712,8 +748,9 @@ private fun LookScreen() {
                                 }
                                 busyFont = ""
                                 if (ok) {
-                                    prefs.fontId = id
-                                    fontId.value = id
+                                    // the file is saved under the label, so that is its font id
+                                    prefs.fontId = label
+                                    fontId.value = label
                                     fonts.value = Global.fonts.all()
                                     toast(ctx, "$label installed ✓")
                                 } else toast(ctx, "Download failed — check network")
@@ -935,6 +972,7 @@ private fun AdvancedScreen() {
                 onTap = { })
             RowCard("Wipe learned words & per-app memory", null, onTap = {
                 Global.prefs.wipeLearnedWords()
+                Global.suggestions.clearLearned()
                 Global.suggestions.loadForLayout(prefs.activeLayoutId)
                 toast(ctx, "Learning wiped ✓")
             })

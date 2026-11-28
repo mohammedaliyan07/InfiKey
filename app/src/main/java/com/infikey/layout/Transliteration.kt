@@ -10,7 +10,7 @@ object Transliteration {
     // 33 consonant keys, canonical order (retroflexes as tt/tth/dd/ddh/nn).
     private val CONS_KEYS = listOf(
         "k", "kh", "g", "gh", "ng", "ch", "chh", "j", "jh", "ny",
-        "t", "th", "d", "dh", "n", "tt", "tth", "dd", "ddh", "nn",
+        "tt", "tth", "dd", "ddh", "nn", "t", "th", "d", "dh", "n",
         "p", "ph", "b", "bh", "m", "y", "r", "l", "v", "sh", "ss", "s", "h"
     )
 
@@ -71,7 +71,7 @@ object Transliteration {
     val TAMIL = Scheme(
         Layouts.TAMIL,
         // Tamil has no aspirates: they fold onto the plain consonant.
-        cons = "க க க க ங ச ச ஜ ஜ ஞ ட ட ட ட ன த த ட ட ண ப ப ப ப ம ய ர ல வ ஷ ஸ ச ஹ".split(" "),
+        cons = "க க க க ங ச ச ஜ ஜ ஞ ட ட ட ட ண த த த த ந ப ப ப ப ம ய ர ல வ ஷ ஸ ச ஹ".split(" "),
         vowels = "அ ஆ இ ஈ உ ஊ எ ஏ ஐ ஒ ஓ ஔ".split(" "),
         matras = listOf("", "ா", "ி", "ீ", "ு", "ூ", "ெ", "ே", "ை", "ொ", "ோ", "ௌ"),
         virama = "்"
@@ -103,7 +103,7 @@ object Transliteration {
 
     val URDU = Scheme(
         Layouts.URDU,
-        cons = "ک خ گ غ نگ چ چھ ج جھ ن ت ٹ د ڈ ن ٹ ٹھ ڈ ڈھ ن پ پھ ب بھ م ی ر ل و ش س س ہ".split(" "),
+        cons = "ک خ گ غ نگ چ چھ ج جھ ن ٹ ٹھ ڈ ڈھ ن ت تھ د دھ ن پ پھ ب بھ م ی ر ل و ش س س ہ".split(" "),
         vowels = listOf("ا", "آ", "ی", "ی", "و", "و", "ے", "ی", "ائ", "و", "او", "اؤ"),
         matras = listOf("ا", "آ", "ی", "ی", "و", "و", "ے", "ی", "ائ", "و", "او", "اؤ"),
         virama = "",
@@ -124,24 +124,25 @@ object Transliteration {
         data class Vowel(val index: Int) : Token
     }
 
-    /** Greedy longest-match the latin input into consonant/vowel tokens. */
-    private fun tokenize(input: String): Pair<List<Any>, String> {
-        val tokens = mutableListOf<Any>()
-        val sb = StringBuilder()
+    private data class Raw(val char: Char) : Token
+
+    /** Greedy longest-match the latin input; unmatched characters stay where they are. */
+    private fun tokenize(input: String): List<Token> {
+        val tokens = mutableListOf<Token>()
         var i = 0
         while (i < input.length) {
             var matched = false
             for (len in 3 downTo 1) {
                 if (i + len > input.length) continue
-                val piece = input.substring(i, i + len)
+                val piece = input.substring(i, i + len).lowercase()
                 val ci = CONS_KEYS.indexOf(piece)
                 if (ci >= 0) { tokens.add(Token.Cons(ci)); i += len; matched = true; break }
                 val vi = VOWEL_KEYS.indexOf(piece)
                 if (vi >= 0) { tokens.add(Token.Vowel(vi)); i += len; matched = true; break }
             }
-            if (!matched) { sb.append(input[i]); i++ }
+            if (!matched) { tokens.add(Raw(input[i])); i++ }
         }
-        return tokens to sb.toString()
+        return tokens
     }
 
     /**
@@ -151,23 +152,21 @@ object Transliteration {
      */
     fun translate(input: String, layoutId: String): String {
         val scheme = SCHEMES[layoutId] ?: return input
-        val (tokens, passthrough) = tokenize(input)
-        val out = StringBuilder(passthrough)
+        val tokens = tokenize(input)
+        val out = StringBuilder()
         for ((idx, token) in tokens.withIndex()) {
             when (token) {
                 is Token.Cons -> {
                     out.append(scheme.cons[token.index])
+                    // implicit schwa deletion: write virama only between consonants
                     val nextIsCons = idx + 1 < tokens.size && tokens[idx + 1] is Token.Cons
-                    val atEnd = idx + 1 == tokens.size
-                    if ((nextIsCons || atEnd) && scheme.virama.isNotEmpty() && !scheme.abjad) {
-                        // implicit schwa deletion: write virama only between consonants
-                        if (nextIsCons) out.append(scheme.virama)
-                    }
+                    if (nextIsCons && !scheme.abjad) out.append(scheme.virama)
                 }
                 is Token.Vowel -> {
                     val prevIsCons = idx > 0 && tokens[idx - 1] is Token.Cons
                     out.append(if (prevIsCons) scheme.matras[token.index] else scheme.vowels[token.index])
                 }
+                is Raw -> out.append(token.char)
             }
         }
         return out.toString()

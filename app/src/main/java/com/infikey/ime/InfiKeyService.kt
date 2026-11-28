@@ -85,6 +85,7 @@ class InfiKeyService : InputMethodService(),
     override fun onCreateInputView(): View {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root = container
+        builtTheme = Global.themes.current()
 
         // every section is built inside its own runCatching — one broken panel
         // is skipped instead of killing the whole input view
@@ -146,9 +147,16 @@ class InfiKeyService : InputMethodService(),
     }
 
     private val prefs get() = Global.prefs
+    private var builtTheme: com.infikey.theme.ThemeEngine.Theme? = null
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        // panels and the bar take their colours when built: rebuild after a theme change
+        if (builtTheme != null && builtTheme != Global.themes.current()) {
+            aiPanel?.destroy()
+            setInputView(onCreateInputView())
+            updateSuggestions()
+        }
         // a brand-new field starts clean: close emoji/AI/clipboard overlays so
         // the user always lands on the keys themselves (switching to InfiKey
         // used to open straight into a panel wall covering the app)
@@ -170,6 +178,8 @@ class InfiKeyService : InputMethodService(),
             val protectedField = fieldInfo?.kind?.privacy == FieldGenius.Privacy.BLOCKED ||
                 (pkg.isNotEmpty() && pkg in prefs.safeApps)
             inputLogic.incognito = protectedField
+            inputLogic.literal = fieldInfo?.kind == FieldGenius.Kind.PASSWORD ||
+                fieldInfo?.kind == FieldGenius.Kind.PIN
 
             // per-app memory: restore language automatically
             if (prefs.perAppAuto && pkg.isNotEmpty()) {
@@ -185,7 +195,8 @@ class InfiKeyService : InputMethodService(),
 
             // dedicated number pad (#15): swap in the keypad for numeric fields
             val numeric = fieldInfo?.kind == FieldGenius.Kind.NUMBER ||
-                fieldInfo?.kind == FieldGenius.Kind.PHONE
+                fieldInfo?.kind == FieldGenius.Kind.PHONE ||
+                fieldInfo?.kind == FieldGenius.Kind.PIN
             if (numeric && prefs.feature("numpad") && !showingNumpad) {
                 applyLayout(com.infikey.layout.Layouts.NUMPAD, persist = false)
             } else if ((!numeric || !prefs.feature("numpad")) && showingNumpad) {
@@ -227,12 +238,13 @@ class InfiKeyService : InputMethodService(),
     }
 
     override fun onGlideEnd(cancelled: Boolean) {
-        if (cancelled) return
+        if (cancelled || inputLogic.literal) return
         val letters = glide.finish() ?: return
         val scored = Global.suggestions.scoreGlide(letters, 3)
         val best = scored.firstOrNull()
         if (best != null) {
-            inputLogic.acceptSuggestion(best)
+            val box = panelInput()
+            if (box != null) insertInto(box, best) else inputLogic.acceptSuggestion(best)
             suggestionBar?.showSuggestions(scored)
         }
     }
@@ -244,6 +256,7 @@ class InfiKeyService : InputMethodService(),
     // ---- key routing ----
 
     override fun onKey(output: String, action: KeyAction) {
+        if (typeIntoPanel(output, action)) return
         when (action) {
             KeyAction.CHAR -> handleChar(output)
             KeyAction.SHIFT -> handleShift()
@@ -257,9 +270,16 @@ class InfiKeyService : InputMethodService(),
                     val before = currentInputConnection?.getTextBeforeCursor(80, 0)?.toString().orEmpty()
                     SmartText.autoEmoji(before)?.let { inputLogic.commitString(it) }
                 }
-                val marker = inputLogic.listContinuation()
-                inputLogic.commitCurrentWord("\n")
-                if (marker != null) inputLogic.commitString(marker)
+                val editorAction = editorAction()
+                if (editorAction != null) {
+                    // Search / Send / Go / Next / Done fields
+                    inputLogic.commitCurrentWord("")
+                    currentInputConnection?.performEditorAction(editorAction)
+                } else {
+                    val marker = inputLogic.listContinuation()
+                    inputLogic.commitCurrentWord("\n")
+                    if (marker != null) inputLogic.commitString(marker)
+                }
                 updateSuggestions()
             }
             KeyAction.SPACE -> handleSpace()
@@ -313,6 +333,12 @@ class InfiKeyService : InputMethodService(),
                     out = out.uppercase()
                 }
                 inputLogic.appendLetter(out)
+                // one-shot shift is spent; keep the service in step with the key view
+                if (shiftOn && !capsLocked) {
+                    shiftOn = false
+                    selAnchor = -1
+                    keyboardView?.setCapsState(shiftOn, capsLocked)
+                }
                 updateSuggestions()
             }
         }
@@ -336,9 +362,8 @@ class InfiKeyService : InputMethodService(),
         // double-tap space → period
         val now = System.currentTimeMillis()
         if (prefs.feature("double_space") && now - lastSpaceTap < 320 &&
-            inputLogic.composingText().isEmpty()
+            inputLogic.doubleSpacePeriod()
         ) {
-            inputLogic.commitString(". ")
             lastSpaceTap = 0L
             return
         }
@@ -346,6 +371,59 @@ class InfiKeyService : InputMethodService(),
         if (prefs.feature("macros") && inputLogic.tryMacro()) return
         inputLogic.commitCurrentWord(" ")
         updateSuggestions()
+    }
+
+    /** The action the field asks Enter to perform, or null for a plain new line. */
+    private fun editorAction(): Int? {
+        val options = currentInputEditorInfo?.imeOptions ?: return null
+        if (options and EditorInfo.IME_FLAG_NO_ENTER_ACTION != 0) return null
+        val action = options and EditorInfo.IME_MASK_ACTION
+        return action.takeIf {
+            it != EditorInfo.IME_ACTION_NONE && it != EditorInfo.IME_ACTION_UNSPECIFIED
+        }
+    }
+
+    // ---- typing into the keyboard's own text boxes (AI compose, clipboard edit) ----
+
+    private fun panelInput(): android.widget.EditText? =
+        aiPanel?.takeIf { it.isOpen() }?.composeInput
+            ?: clipboardPanel?.takeIf { it.visibility == View.VISIBLE }?.editor
+
+    private fun insertInto(box: android.widget.EditText, text: String) {
+        val start = minOf(box.selectionStart, box.selectionEnd).coerceAtLeast(0)
+        val end = maxOf(box.selectionStart, box.selectionEnd).coerceAtLeast(0)
+        box.text.replace(start, end, text)
+    }
+
+    /** Routes typing keys to a panel text box. Returns false for every other key. */
+    private fun typeIntoPanel(output: String, action: KeyAction): Boolean {
+        val box = panelInput() ?: return false
+        when {
+            action == KeyAction.CHAR && output != "globe" -> {
+                insertInto(box, output)
+                if (shiftOn && !capsLocked) {
+                    shiftOn = false
+                    keyboardView?.setCapsState(shiftOn, capsLocked)
+                }
+            }
+            action == KeyAction.SPACE -> insertInto(box, " ")
+            action == KeyAction.ENTER -> insertInto(box, "\n")
+            action == KeyAction.BACKSPACE || output == "delete_word" || output == "clear" -> {
+                val start = box.selectionStart
+                val end = box.selectionEnd
+                if (start != end) insertInto(box, "")
+                else if (start > 0) {
+                    val before = box.text.substring(0, start)
+                    val n = if (action == KeyAction.BACKSPACE) SmartText.clusterLen(before)
+                        else before.length - (before.trimEnd().lastIndexOf(' ') + 1)
+                    box.text.delete((start - n).coerceAtLeast(0), start)
+                }
+            }
+            output == "cursor_left" -> box.setSelection((box.selectionStart - 1).coerceAtLeast(0))
+            output == "cursor_right" -> box.setSelection((box.selectionStart + 1).coerceAtMost(box.length()))
+            else -> return false
+        }
+        return true
     }
 
     private fun showSymbolsPage(page: List<com.infikey.layout.KeyboardRow>) {
@@ -400,6 +478,7 @@ class InfiKeyService : InputMethodService(),
     private fun closePanels() {
         emojiPanel?.visibility = View.GONE
         clipboardPanel?.visibility = View.GONE
+        clipboardPanel?.closeEditor()
         aiPanel?.close()
     }
 
@@ -517,8 +596,9 @@ class InfiKeyService : InputMethodService(),
     }
 
     override fun onSuggestion(word: String) {
+        panelInput()?.let { insertInto(it, "$word "); return }
         inputLogic.acceptSuggestion(word)
-        Global.suggestions.learn(word)
+        if (!inputLogic.incognito) Global.suggestions.learn(word)
         updateSuggestions()
     }
 
@@ -588,6 +668,16 @@ class InfiKeyService : InputMethodService(),
         if (!prefs.feature("voice")) return
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             android.widget.Toast.makeText(this, "No speech service installed", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            // a keyboard service cannot show the permission dialog itself
+            startActivity(
+                Intent(this, com.infikey.settings.MicPermissionActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
             return
         }
         speech?.destroy()

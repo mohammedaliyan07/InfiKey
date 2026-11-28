@@ -7,7 +7,7 @@
 InfiKey is an Android keyboard (IME) with a real AI brain built in:
 
 - **On-device AI** — runs [LiquidAI LFM2.5-1.2B-Instruct](https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF) (Q4_K_M, ~731 MB, downloaded in one tap) via llama.cpp. Works with airplane mode on.
-- **Any GGUF** — import *any* GGUF model from your storage, the app folder, or a URL. InfiKey scans, validates and auto-loads it.
+- **Any GGUF** — import *any* GGUF model from your storage or the app folder. InfiKey validates it and loads it.
 - **Any cloud API** — add any OpenAI-compatible endpoint: any provider, any base URL, any model, custom headers. Groq, OpenRouter, Together, Ollama, LM Studio, your own server — all fine.
 - **AI types *into* the focused field** — even where paste is blocked. The IME commits text directly through the input connection, so AI-written content lands in ChatGPT boxes, exam apps, banking forms — anywhere.
 - **12 Indic scripts + transliteration** — Devanagari, Bengali, Tamil, Telugu, Kannada, Malayalam, Gujarati, Gurmukhi, Odia, Urdu (RTL), Ol Chiki, Latin. Live transliteration for 8 languages.

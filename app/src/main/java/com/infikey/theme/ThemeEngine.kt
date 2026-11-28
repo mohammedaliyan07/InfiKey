@@ -141,17 +141,20 @@ class ThemeEngine(private val context: Context) {
 
     private val sp = context.getSharedPreferences("infikey", Context.MODE_PRIVATE)
 
+    /** Cached theme with the stored values it was built from. */
     @Volatile
-    private var cache: Theme? = null
+    private var cache: Pair<String, Theme>? = null
 
     fun current(): Theme {
-        cache?.let { return it }
+        // other ThemeEngine instances (settings screen) write the same prefs
         val id = sp.getString("theme_id", "obsidian_aurora") ?: "obsidian_aurora"
+        val key = if (id.startsWith("custom_")) id + sp.getString("custom_theme_json", "") else id
+        cache?.let { if (it.first == key) return it.second }
         val t = if (id.startsWith("custom_")) {
             val stored = sp.getString("custom_theme_json", null)
             stored?.let { runCatching { themeFromJson(JSONObject(it)) }.getOrNull() } ?: byId(id)
         } else byId(id)
-        cache = t
+        cache = key to t
         return t
     }
 

@@ -97,6 +97,9 @@ class KeyboardView(context: Context) : View(context) {
     // shape gestures (#74) — sampled touch path, classified on lift
     private val shapePoints = mutableListOf<Pair<Float, Float>>()
 
+    /** Set once a swipe has acted, so lifting the finger does not also type a key. */
+    private var gestureConsumed = false
+
     // spacebar trackpad (#13) — continuous slide moves the caret
     private var trackpadLastX = Float.NaN
     private var trackpadAccum = 0f
@@ -114,9 +117,10 @@ class KeyboardView(context: Context) : View(context) {
             val dx = e2.x - e1.x
             return when {
                 // swipe down anywhere → hide keyboard
-                dy > 120 && abs(dy) > abs(dx) * 1.6f -> { callbacks?.onHideRequest(); true }
+                dy > 120 && abs(dy) > abs(dx) * 1.6f -> { gestureConsumed = true; callbacks?.onHideRequest(); true }
                 // swipe up on space → switch language (#24)
                 dy < -120 && abs(dy) > abs(dx) * 1.2f && spaceUnder(e1) -> {
+                    gestureConsumed = true
                     callbacks?.onKey("globe", com.infikey.layout.KeyAction.GLOBE); true
                 }
                 // horizontal swipes on space / delete handled via active key at fling start
@@ -139,8 +143,10 @@ class KeyboardView(context: Context) : View(context) {
                     prefs.feature("cursor_drag") -> { gestureCursor(1); true }
                 k?.action == com.infikey.layout.KeyAction.BACKSPACE && dx < -60 -> {
                     // delete-word (#18) unless continuous swipe-to-delete (#23) owns the gesture
-                    if (!prefs.feature("swipe_delete") && prefs.feature("delete_word"))
+                    if (!prefs.feature("swipe_delete") && prefs.feature("delete_word")) {
+                        gestureConsumed = true
                         callbacks?.onKey("delete_word", com.infikey.layout.KeyAction.NONE)
+                    }
                     true
                 }
                 else -> false
@@ -148,6 +154,9 @@ class KeyboardView(context: Context) : View(context) {
         }
 
         private fun gestureCursor(dir: Int) {
+            // the continuous slide may already have moved the caret
+            if (gestureConsumed) return
+            gestureConsumed = true
             callbacks?.onKey(if (dir < 0) "cursor_left" else "cursor_right", com.infikey.layout.KeyAction.NONE)
         }
     })
@@ -356,35 +365,47 @@ class KeyboardView(context: Context) : View(context) {
         else -> if (shiftOn && layout?.hasCase == true && key.label.length == 1) key.label.uppercase() else key.label
     }
 
+    /** Decoded, blurred and scaled backdrop, rebuilt only when its inputs change. */
+    private var bgCache: android.graphics.Bitmap? = null
+    private var bgCacheKey = ""
+
+    private fun backdrop(path: String, blur: Float): android.graphics.Bitmap? {
+        val key = "$path|$blur|$width|$height"
+        if (key == bgCacheKey) return bgCache
+        bgCache?.recycle()
+        bgCache = null
+        bgCacheKey = key
+        val bmp = android.graphics.BitmapFactory.decodeFile(path) ?: return null
+        // blur (#25): downscale then upscale — cheap, real-looking softening
+        val pre = if (blur > 1f) {
+            val f = 1f / (blur / 4f).coerceIn(1f, 16f)
+            android.graphics.Bitmap.createScaledBitmap(
+                bmp, (bmp.width * f).toInt().coerceAtLeast(1),
+                (bmp.height * f).toInt().coerceAtLeast(1), true
+            )
+        } else bmp
+        val scaled = android.graphics.Bitmap.createScaledBitmap(pre, width, height, true)
+        if (pre !== bmp && pre !== scaled) pre.recycle()
+        if (bmp !== scaled && !bmp.isRecycled) bmp.recycle()
+        bgCache = scaled
+        return scaled
+    }
+
     private fun drawBackgroundImage(canvas: Canvas, radius: Float) {
         val path = prefs.bgImagePath
         if (path.isEmpty()) return
         if (!prefs.feature("photo_keyboard")) return
         runCatching {
-            val bmp = android.graphics.BitmapFactory.decodeFile(path) ?: return
             // blur & dim sliders (#26) only affect the backdrop when enabled
             val fx = prefs.feature("blur_dim")
             val dim = if (fx) prefs.bgDim else 0f
+            val image = backdrop(path, if (fx) prefs.bgBlur else 0f) ?: return
             val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { alpha = ((1f - dim) * 255).toInt() }
-            // blur (#25): downscale then upscale — cheap, real-looking softening
-            val pre = if (fx && prefs.bgBlur > 1f) {
-                val f = 1f / (prefs.bgBlur / 4f).coerceIn(1f, 16f)
-                android.graphics.Bitmap.createScaledBitmap(
-                    bmp, (bmp.width * f).toInt().coerceAtLeast(1),
-                    (bmp.height * f).toInt().coerceAtLeast(1), true
-                )
-            } else bmp
-            val scaled = android.graphics.Bitmap.createScaledBitmap(
-                pre, width, height, true
-            )
-            if (pre !== bmp) pre.recycle()
             canvas.save()
-            val clip = Path().apply { addRoundRect(RectF(0f, 0f, width.toFloat(), height.toFloat()), radius.toFloat(), radius.toFloat(), Path.Direction.CW) }
+            val clip = Path().apply { addRoundRect(RectF(0f, 0f, width.toFloat(), height.toFloat()), radius, radius, Path.Direction.CW) }
             canvas.clipPath(clip)
-            canvas.drawBitmap(scaled, 0f, 0f, paint)
+            canvas.drawBitmap(image, 0f, 0f, paint)
             canvas.restore()
-            scaled.recycle()
-            bmp.recycle()
         }.onFailure { Log.w(TAG, "bg image failed", it) }
     }
 
@@ -397,6 +418,7 @@ class KeyboardView(context: Context) : View(context) {
         if (event.action == MotionEvent.ACTION_DOWN) {
             // a stale long-press popup must never linger over fresh touches
             popup?.dismiss()
+            gestureConsumed = false
             downX = event.x
             downY = event.y
             // ARM a glide instead of starting it: GlideTracker.finish() needs
@@ -469,10 +491,12 @@ class KeyboardView(context: Context) : View(context) {
                     if (fine || prefs.feature("cursor_drag")) {
                         val step = resources.displayMetrics.density * (if (fine) 12f else 34f)
                         while (trackpadAccum > step) {
+                            gestureConsumed = true
                             callbacks?.onKey("cursor_right", com.infikey.layout.KeyAction.NONE)
                             trackpadAccum -= step
                         }
                         while (trackpadAccum < -step) {
+                            gestureConsumed = true
                             callbacks?.onKey("cursor_left", com.infikey.layout.KeyAction.NONE)
                             trackpadAccum += step
                         }
@@ -488,6 +512,7 @@ class KeyboardView(context: Context) : View(context) {
                     if (prefs.feature("swipe_delete")) {
                         val step = resources.displayMetrics.density * 60f
                         while (backspaceAccum > step) {
+                            gestureConsumed = true
                             callbacks?.onKey("delete_word", com.infikey.layout.KeyAction.NONE)
                             backspaceAccum -= step
                         }
@@ -501,11 +526,11 @@ class KeyboardView(context: Context) : View(context) {
                 activeKey = null
                 rippleKey = null
                 trailPoints.clear()
-                val shape = if (prefs.shapeGestures && shapePoints.size >= 5) classifyShape(shapePoints) else null
+                val shape = if (!gestureConsumed && prefs.shapeGestures && shapePoints.size >= 5) classifyShape(shapePoints) else null
                 shapePoints.clear()
                 if (shape != null) {
                     callbacks?.onShape(shape)
-                } else if (!longPressFired && k != null) {
+                } else if (!gestureConsumed && !longPressFired && k != null) {
                     fireKey(k)
                 }
             }

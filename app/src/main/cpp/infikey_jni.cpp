@@ -20,6 +20,18 @@ struct Job {
     const llama_vocab* vocab = nullptr;
 };
 
+// Length of the prefix that ends on a whole UTF-8 character.
+size_t completeUtf8Length(const std::string& s) {
+    size_t i = s.size();
+    for (int back = 1; back <= 4 && i > 0; ++back) {
+        unsigned char c = (unsigned char)s[--i];
+        if ((c & 0xC0) == 0x80) continue; // continuation byte, keep looking for the lead
+        int need = (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : (c & 0xF8) == 0xF0 ? 4 : 1;
+        return back >= need ? s.size() : i;
+    }
+    return s.size();
+}
+
 // UTF-8 -> jstring via UTF-16 (safe for emoji / Indic text).
 jstring utf8ToJString(JNIEnv* env, const std::string& utf8) {
     std::u16string out;
@@ -96,6 +108,9 @@ Java_com_infikey_ai_LlamaBridge_nativeGenerate(
     jmethodID onToken = env->GetMethodID(cbClass, "onToken", "(Ljava/lang/String;)Z");
     if (!onToken) return JNI_FALSE;
 
+    // each request is self-contained: drop what the previous one left in the context
+    llama_memory_clear(llama_get_memory(job->ctx), true);
+
     // Tokenize
     std::vector<llama_token> tokens(promptStr.size() + 8);
     int n = llama_tokenize(job->vocab, promptStr.c_str(), (int32_t)promptStr.size(),
@@ -121,30 +136,36 @@ Java_com_infikey_ai_LlamaBridge_nativeGenerate(
     }
 
     std::string generated;
+    std::string pending; // bytes of a character that is split across tokens
+    llama_token tok = 0; // outlives the loop body: the next batch points at it
     llama_batch batch = llama_batch_get_one(tokens.data(), (int)tokens.size());
     bool ok = true;
     for (int step = 0; step < maxTokens; ++step) {
         if (g_cancel) break;
         if (llama_decode(job->ctx, batch)) { ok = false; break; }
-        llama_token tok = llama_sampler_sample(chain, job->ctx, -1);
+        tok = llama_sampler_sample(chain, job->ctx, -1);
         if (llama_vocab_is_eog(job->vocab, tok)) break;
 
         char buf[512];
         int n_chars = llama_detokenize(job->vocab, &tok, 1, buf, sizeof(buf), false, true);
+        batch = llama_batch_get_one(&tok, 1);
         if (n_chars <= 0) continue;
-        std::string piece(buf, (size_t)n_chars);
-        generated += piece;
+        generated.append(buf, (size_t)n_chars);
+        pending.append(buf, (size_t)n_chars);
 
-        jstring js = utf8ToJString(env, piece);
+        const size_t ready = completeUtf8Length(pending);
+        if (ready == 0) continue;
+        jstring js = utf8ToJString(env, pending.substr(0, ready));
+        pending.erase(0, ready);
         jboolean cont = env->CallBooleanMethod(callback, onToken, js);
         env->DeleteLocalRef(js);
+        if (env->ExceptionCheck()) { ok = false; break; }
         if (!cont) break;
 
         if (!stopStr.empty()) {
             size_t pos = generated.rfind(stopStr);
             if (pos != std::string::npos) break;
         }
-        batch = llama_batch_get_one(&tok, 1);
     }
     llama_sampler_free(chain);
     return ok ? JNI_TRUE : JNI_FALSE;

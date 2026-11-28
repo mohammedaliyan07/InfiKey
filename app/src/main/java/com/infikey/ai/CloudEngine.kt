@@ -80,6 +80,13 @@ class CloudEngine(private val endpoint: CloudEndpoint) : AiEngine {
                 put("top_p", opts.topP.toDouble())
             }
 
+            // never send a key unencrypted over the internet; local servers stay allowed
+            val target = URL(endpoint.completionUrl())
+            check(
+                target.protocol != "http" || endpoint.apiKey.isBlank() ||
+                    com.infikey.ime.TextRules.isLocalHost(target.host)
+            ) { "use https:// — an API key is not sent over plain http to a remote server" }
+
             var lastErr: Exception? = null
             repeat(2) { attempt ->
                 try {

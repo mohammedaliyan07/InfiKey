@@ -45,13 +45,11 @@ Invalid imports are deleted automatically, so the models folder never fills with
 
 ## Importing any GGUF
 
-Three ways, all equivalent:
+Two ways:
 
 - **Storage import** — the Android file picker (SAF); the file is stream-copied into the
   models folder with a progress callback, then validated.
 - **Folder drop** — copy into `Android/data/com.infikey/files/models/` (see above).
-- **URL import** — give the app a direct link to a `.gguf`; it downloads through the same
-  validated pipeline.
 
 Any instruct GGUF works. Practical guidance:
 

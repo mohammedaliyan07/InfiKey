@@ -24,8 +24,8 @@ bash app/src/main/cpp/fetch_llama_cpp.sh
 ```
 
 - clones llama.cpp into `app/src/main/cpp/llama.cpp/` (skipped if present),
-- defaults to `master` because LFM2.5 support needs a recent llama.cpp,
-- pin a tag with `LLAMA_CPP_TAG=<tag>`.
+- pinned to commit `8e23278` so upstream changes cannot break the build,
+- override with `LLAMA_CPP_TAG=<commit, tag or branch>`.
 
 ## Build
 

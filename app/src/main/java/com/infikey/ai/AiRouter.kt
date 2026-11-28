@@ -3,6 +3,9 @@ package com.infikey.ai
 import android.content.Context
 import android.util.Log
 import com.infikey.prefs.Prefs
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.io.File
 
 /**
  * Multi-model router.
@@ -31,8 +34,24 @@ class AiRouter(private val context: Context) {
     var currentModelPath: String = prefs.getString("active_model_path", "") ?: ""
         private set
 
+    /** One load at a time: two parallel llama.cpp loads can exhaust memory. */
+    private val loadLock = Mutex()
+
     /** Loads an on-device model (any GGUF). Unloads previous to keep memory sane. */
-    suspend fun loadOnDevice(path: String, ctxSize: Int = 2048, gpuLayers: Int = 0): Boolean {
+    suspend fun loadOnDevice(path: String, ctxSize: Int = 2048, gpuLayers: Int = 0): Boolean =
+        loadLock.withLock { load(path, ctxSize, gpuLayers) }
+
+    /** Reloads the last used model if the process was restarted since it was loaded. */
+    suspend fun ensureLoaded() = loadLock.withLock {
+        val mode = prefs.getString("ai_mode", "auto")
+        val path = currentModelPath
+        if (fastEngine == null && mode != "cloud" && path.isNotEmpty() && File(path).isFile) {
+            runCatching { load(path, 2048, 0) }.onFailure { Log.w(TAG, "model reload failed", it) }
+        }
+        Unit
+    }
+
+    private suspend fun load(path: String, ctxSize: Int, gpuLayers: Int): Boolean {
         val old = fastEngine
         val engine = OnDeviceEngine(path, ctxSize, gpuLayers = gpuLayers)
         val ok = engine.load()

@@ -92,6 +92,12 @@ class SuggestionEngine(private val context: Context) {
         sp.edit().putStringSet("learned_$lang", set).apply()
     }
 
+    /** Drops everything learned that is still held in memory. */
+    fun clearLearned() {
+        userWords.clear()
+        bigrams.clear()
+    }
+
     fun knows(word: String): Boolean {
         val w = word.trim().lowercase()
         return userWords.containsKey(w) || words.containsKey(w)

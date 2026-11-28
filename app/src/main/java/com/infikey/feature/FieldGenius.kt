@@ -18,6 +18,7 @@ object FieldGenius {
     ) {
         PASSWORD("Password", "", Privacy.BLOCKED),
         EMAIL("Email", "an email address", Privacy.SUGGEST),
+        PIN("PIN", "", Privacy.BLOCKED),
         PHONE("Phone", "a phone number", Privacy.BLOCKED),
         NUMBER("Number", "a numeric field", Privacy.NORMAL),
         URL("URL", "a web address", Privacy.SUGGEST),
@@ -47,6 +48,8 @@ object FieldGenius {
         return when {
             cls == EditorInfo.TYPE_CLASS_TEXT && variation == EditorInfo.TYPE_TEXT_VARIATION_PASSWORD -> Kind.PASSWORD
             cls == EditorInfo.TYPE_CLASS_TEXT && variation == EditorInfo.TYPE_TEXT_VARIATION_WEB_PASSWORD -> Kind.PASSWORD
+            cls == EditorInfo.TYPE_CLASS_TEXT && variation == EditorInfo.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD -> Kind.PASSWORD
+            cls == EditorInfo.TYPE_CLASS_NUMBER && variation == EditorInfo.TYPE_NUMBER_VARIATION_PASSWORD -> Kind.PIN
             cls == EditorInfo.TYPE_CLASS_TEXT && variation == EditorInfo.TYPE_TEXT_VARIATION_EMAIL_ADDRESS -> Kind.EMAIL
             cls == EditorInfo.TYPE_CLASS_TEXT && variation == EditorInfo.TYPE_TEXT_VARIATION_URI -> Kind.URL
             cls == EditorInfo.TYPE_CLASS_TEXT && variation == EditorInfo.TYPE_TEXT_VARIATION_PERSON_NAME -> Kind.NAME

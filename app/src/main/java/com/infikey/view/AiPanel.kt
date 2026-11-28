@@ -48,6 +48,11 @@ class AiPanel(context: Context) : LinearLayout(context) {
 
     private var activeJob: Job? = null
 
+    /** Non-null while Compose is open; the keyboard types into it. */
+    var composeInput: android.widget.EditText? = null
+        private set
+    private val composeBox = LinearLayout(context)
+
     private val status = TextView(context)
     private val output = TextView(context)
     private val busy = ProgressBar(context)
@@ -86,11 +91,13 @@ class AiPanel(context: Context) : LinearLayout(context) {
         header.addView(close)
         addView(header)
 
-        // action chips
+        // action chips — each row scrolls sideways so no chip is cut off
         actionGrid.orientation = HORIZONTAL
-        addView(actionGrid)
-        addView(toneRow)
-        addView(variantRow)
+        addView(scrolling(actionGrid))
+        addView(scrolling(toneRow))
+        addView(scrolling(variantRow))
+        composeBox.orientation = VERTICAL
+        addView(composeBox)
 
         // output box
         outputScroll.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, (140 * d).toInt())
@@ -141,6 +148,11 @@ class AiPanel(context: Context) : LinearLayout(context) {
 
     // ---- UI helpers ----
 
+    private fun scrolling(row: LinearLayout) = android.widget.HorizontalScrollView(context).apply {
+        isHorizontalScrollBarEnabled = false
+        addView(row)
+    }
+
     private fun chip(label: String, accent: Boolean = false, onTap: () -> Unit) = TextView(context).apply {
         text = label
         textSize = 13f
@@ -183,6 +195,8 @@ class AiPanel(context: Context) : LinearLayout(context) {
         actionGrid.removeAllViews()
         toneRow.removeAllViews()
         variantRow.removeAllViews()
+        composeBox.removeAllViews()
+        composeInput = null
         output.text = ""
         lastResult = ""
         outputScroll.visibility = GONE
@@ -232,7 +246,7 @@ class AiPanel(context: Context) : LinearLayout(context) {
 
     private fun showCompose() {
         clearDynamic()
-        actionGrid.addView(TextView(context).apply {
+        composeBox.addView(TextView(context).apply {
             text = "What should InfiKey write?"
             textSize = 14f; setTextColor(theme.text)
             setPadding(0, (8 * d).toInt(), 0, (8 * d).toInt())
@@ -246,13 +260,18 @@ class AiPanel(context: Context) : LinearLayout(context) {
             background = GradientDrawable().apply { cornerRadius = 12 * d; setColor(theme.key) }
             setPadding((10 * d).toInt(), (12 * d).toInt(), (10 * d).toInt(), (12 * d).toInt())
         }
-        actionGrid.addView(input, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        input.showSoftInputOnFocus = false
+        composeBox.addView(input, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        composeInput = input
+        input.requestFocus()
         actionGrid.addView(chip("⚡ Generate", accent = true) {
             val what = input.text.toString().trim()
             if (what.isNotBlank()) {
                 // Style DNA (#51) only shapes output while its toggle is on
                 val dna = if (prefs.feature("style_dna")) prefs.readStyleDna()
                     else com.infikey.ai.StyleDna.DEFAULT
+                composeBox.removeAllViews()
+                composeInput = null // keys go back to the app while the result streams
                 runTask(AiPrompts.compose(what, selectedTone, fieldHint(), dna))
             }
         })
@@ -293,6 +312,7 @@ class AiPanel(context: Context) : LinearLayout(context) {
         activeJob = scope.launch {
             busy.visibility = VISIBLE
             runCatching {
+                Global.router.ensureLoaded()
                 Global.router.chat(
                     AiRouter.Tier.DEEP, AiPrompts.rewrite(text, styles.map { it.label }),
                     GenOptions(maxTokens = 500)
@@ -309,6 +329,7 @@ class AiPanel(context: Context) : LinearLayout(context) {
         activeJob = scope.launch {
             busy.visibility = VISIBLE
             runCatching {
+                Global.router.ensureLoaded()
                 Global.router.chat(
                     AiRouter.Tier.FAST, AiPrompts.replyChips(context, "the user's language"),
                     GenOptions(maxTokens = 120)
@@ -321,19 +342,29 @@ class AiPanel(context: Context) : LinearLayout(context) {
     }
 
     private fun runTask(messages: List<com.infikey.ai.ChatMessage>) {
-        if (Global.router.engineFor(AiRouter.Tier.FAST) == null &&
-            Global.router.engineFor(AiRouter.Tier.DEEP) == null) {
-            toast("No AI loaded — open ⚙ → AI model")
-            return
-        }
+        activeJob?.cancel()
         activeJob = scope.launch {
             busy.visibility = VISIBLE
+            Global.router.ensureLoaded()
+            refreshStatus()
+            if (Global.router.engineFor(AiRouter.Tier.FAST) == null &&
+                Global.router.engineFor(AiRouter.Tier.DEEP) == null) {
+                busy.visibility = GONE
+                toast("No AI loaded — open ⚙ → AI model")
+                return@launch
+            }
             outputScroll.visibility = VISIBLE
             output.text = ""
+            val job = coroutineContext[Job]
             runCatching {
                 Global.router.streamChat(messages, selectedTone, fieldHint()) { partial ->
-                    output.text = partial
-                    outputScroll.post { outputScroll.fullScroll(android.view.View.FOCUS_DOWN) }
+                    // tokens arrive on a worker thread; views are main-thread only
+                    output.post {
+                        if (job?.isCancelled != true) {
+                            output.text = partial
+                            outputScroll.fullScroll(android.view.View.FOCUS_DOWN)
+                        }
+                    }
                 }
             }.onSuccess {
                 busy.visibility = GONE
@@ -354,6 +385,7 @@ class AiPanel(context: Context) : LinearLayout(context) {
     }
 
     private fun showError(t: Throwable) {
+        if (t is kotlin.coroutines.cancellation.CancellationException) return
         outputScroll.visibility = VISIBLE
         output.setTextColor(0xFFEF4444.toInt())
         output.text = "AI failed: ${t.message ?: t.javaClass.simpleName}\nCheck model/cloud settings."
@@ -391,10 +423,16 @@ class AiPanel(context: Context) : LinearLayout(context) {
         }
         refreshStatus()
         showActions()
+        // bring back the saved model after Android restarted the app
+        scope.launch {
+            Global.router.ensureLoaded()
+            refreshStatus()
+        }
     }
 
     fun close() {
         activeJob?.cancel()
+        composeInput = null
         visibility = GONE
         callbacks?.onPanelClosed()
     }
