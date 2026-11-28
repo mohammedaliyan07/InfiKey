@@ -80,6 +80,11 @@ class KeyboardView(context: Context) : View(context) {
     private var longPressFired = false
     private var glideMode = false
     private var lastTouchAt = 0L
+    // glide arming: a glide may only START after the finger moves past the
+    // touch slop — arming it on ACTION_DOWN swallowed every plain tap
+    private var glideArmed = false
+    private var downX = 0f
+    private var downY = 0f
 
     // glide trail (#3) — visible stroke that follows the finger
     private val trailPoints = mutableListOf<Pair<Float, Float>>()
@@ -177,6 +182,10 @@ class KeyboardView(context: Context) : View(context) {
         // number row toggle (#1): prepend digits to any letter layout
         layout = if (prefs.numberRow && l.id != "numpad" && !l.id.startsWith("_symbols"))
             withNumberRow(l) else l
+        // letters↔symbols both have 4 rows → identical measured height →
+        // onSizeChanged never fires → the previous layout's key rects lingered
+        // and the symbols page never appeared. Recompute whenever sized.
+        if (width > 0 && height > 0) computeKeyRects(width, height)
         requestLayout()
         invalidate()
     }
@@ -200,12 +209,19 @@ class KeyboardView(context: Context) : View(context) {
             "right" -> resources.displayMetrics.widthPixels * 0.06f
             else -> 0f
         }
+        // the shift is baked into the key rects — recompute, or the keyboard
+        // keeps drawing (and hit-testing) at the old position
+        if (width > 0 && height > 0) computeKeyRects(width, height)
         invalidate()
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val w = MeasureSpec.getSize(widthMeasureSpec)
         val d = resources.displayMetrics.density
+        // sync the gap with computeKeyRects BEFORE measuring height: on the
+        // first layout pass the field is still 0, which produced a keyboard
+        // measured without row gaps and keys drawn a few dp too flat
+        gap = d * 4f
         val rows = layout?.main?.size ?: 4
         val rowH = prefs.keyHeightDp * d * (if (prefs.elderMode) 1.18f else 1f)
         val h = (rows * rowH + (rows + 1) * gap + d * 8).toInt()
@@ -292,7 +308,9 @@ class KeyboardView(context: Context) : View(context) {
             textPaint.textSize = (if (special) d * 14f else d * 21f) * scale
             val label = displayLabel(key)
             val cx = rect.centerX()
-            val cy = rect.centerY() - (textPaint.textSize - textPaint.ascent() - textPaint.descent()) / 2
+            // true vertical centering: ascent is negative, descent positive,
+            // so the baseline sits half a glyph-height below the key centre
+            val cy = rect.centerY() - (textPaint.ascent() + textPaint.descent()) / 2
             canvas.drawText(label, cx, cy, textPaint)
             if (prefs.feature("long_press_popups") && key.popups.isNotEmpty() && !special) {
                 hintTextPaint.color = if (prefs.feature("accessibility")) theme.text else theme.hint
@@ -376,11 +394,17 @@ class KeyboardView(context: Context) : View(context) {
     // ---- touch ----
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (prefs.glideEnabled && !glideMode && event.action == MotionEvent.ACTION_DOWN) {
-            val key = keyRects.firstOrNull { it.first.contains(event.x, event.y) }?.second
-            if (key != null && !key.isSpecial && key.label.length == 1) {
-                glideMode = true
-                callbacks?.onGlideStart(event.x, event.y)
+        if (event.action == MotionEvent.ACTION_DOWN) {
+            // a stale long-press popup must never linger over fresh touches
+            popup?.dismiss()
+            downX = event.x
+            downY = event.y
+            // ARM a glide instead of starting it: GlideTracker.finish() needs
+            // 2+ letters, so starting on DOWN turned every plain tap into a
+            // no-op — the reported "keys of the keyboard are not working".
+            glideArmed = prefs.glideEnabled && run {
+                val k = keyRects.firstOrNull { it.first.contains(event.x, event.y) }?.second
+                k != null && !k.isSpecial && k.label.length == 1
             }
         }
         if (glideMode) return handleGlide(event)
@@ -403,6 +427,25 @@ class KeyboardView(context: Context) : View(context) {
                 if (prefs.feature("long_press_popups")) postDelayed(longPressRunnable, 380)
             }
             MotionEvent.ACTION_MOVE -> {
+                // a glide begins only once the finger actually travels —
+                // until then this is still a candidate tap on the key
+                if (glideArmed && !glideMode && prefs.glideEnabled &&
+                    kotlin.math.hypot(
+                        (event.x - downX).toDouble(),
+                        (event.y - downY).toDouble()
+                    ) > resources.displayMetrics.density * 18f
+                ) {
+                    glideArmed = false
+                    glideMode = true
+                    removeCallbacks(longPressRunnable)
+                    popup?.dismiss()
+                    activeKey = null
+                    rippleKey = null
+                    trailPoints.clear()
+                    invalidate()
+                    callbacks?.onGlideStart(event.x, event.y)
+                    return handleGlide(event)
+                }
                 val now = keyRects.firstOrNull { it.first.contains(event.x, event.y) }?.second
                 if (now != activeKey) {
                     removeCallbacks(longPressRunnable)
@@ -453,6 +496,7 @@ class KeyboardView(context: Context) : View(context) {
             }
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(longPressRunnable)
+                glideArmed = false
                 val k = activeKey
                 activeKey = null
                 rippleKey = null
@@ -467,6 +511,7 @@ class KeyboardView(context: Context) : View(context) {
             }
             MotionEvent.ACTION_CANCEL -> {
                 removeCallbacks(longPressRunnable)
+                glideArmed = false
                 activeKey = null
                 rippleKey = null
                 invalidate()
@@ -477,10 +522,23 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun handleGlide(event: MotionEvent): Boolean {
         when (event.action) {
-            MotionEvent.ACTION_MOVE -> callbacks?.onGlideMove(event.x, event.y)
+            MotionEvent.ACTION_MOVE -> {
+                // keep the visible trail in sync with the glide path —
+                // the normal MOVE branch no longer runs once gliding
+                if (trailPoints.isEmpty() ||
+                    (kotlin.math.hypot(
+                        (event.x - trailPoints.last().first).toDouble(),
+                        (event.y - trailPoints.last().second).toDouble()
+                    ) > 8)
+                ) trailPoints.add(event.x to event.y)
+                invalidate()
+                callbacks?.onGlideMove(event.x, event.y)
+            }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
                 if (glideMode) {
                     glideMode = false
+                    trailPoints.clear()
+                    invalidate()
                     callbacks?.onGlideEnd(event.action == MotionEvent.ACTION_CANCEL)
                 }
         }
@@ -594,8 +652,28 @@ class KeyboardView(context: Context) : View(context) {
         }
         popup = android.widget.PopupWindow(holder, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, false).apply {
             setBackgroundDrawable(android.graphics.drawable.ColorDrawable(withAlpha(theme.key, 1f)))
+            isOutsideTouchable = true
             val rect = keyRects.firstOrNull { it.second == k }
-            if (rect != null) showAsDropDown(this@KeyboardView, rect.first.left.toInt(), -(height + rect.first.height().toInt() + (10 * d).toInt()))
+            if (rect != null) {
+                // measure first: the old code used the not-yet-laid-out popup
+                // height (0) and anchored to the keyboard's BOTTOM edge, so
+                // popups landed rows away from the pressed key
+                holder.measure(
+                    android.view.View.MeasureSpec.UNSPECIFIED,
+                    android.view.View.MeasureSpec.UNSPECIFIED
+                )
+                val pw = holder.measuredHeight
+                val px = minOf(
+                    rect.first.left.toInt(),
+                    this@KeyboardView.width - holder.measuredWidth - (4 * d).toInt()
+                ).coerceAtLeast((4 * d).toInt())
+                // try to float the popup just above the key; fall back to
+                // below it when there is no room left at the top of the window
+                val above = rect.first.top.toInt() - pw - (6 * d).toInt()
+                val py = if (above >= 0) above else rect.first.bottom.toInt() + (6 * d).toInt()
+                // showAsDropDown places the popup at anchor.bottom + yoff
+                showAsDropDown(this@KeyboardView, px, py - this@KeyboardView.height)
+            }
         }
         holder.startAnimation(AnimationUtils.loadAnimation(context, android.R.anim.fade_in))
     }
