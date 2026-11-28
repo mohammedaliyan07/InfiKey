@@ -315,6 +315,8 @@ private fun AiScreen() {
     var editingEndpoint by remember { mutableStateOf<CloudEndpoint?>(null) }
     // model delete (#86): pending model waiting for confirmation
     var deleteCandidate by remember { mutableStateOf<ModelManager.LocalModel?>(null) }
+    // mode chip label must react to taps — prefs alone don't trigger recomposition
+    var aiMode by remember { mutableStateOf(prefs.aiMode) }
 
     fun loadModel(path: String, label: String) {
         if (loadingModel.value) return
@@ -435,13 +437,14 @@ private fun AiScreen() {
         }
         item {
             SectionTitle("Cloud APIs (any OpenAI-compatible site)")
-            RowCard("AI mode", "on-device ↔ cloud ↔ offline · current: ${prefs.aiMode}", trailing = {
+            RowCard("AI mode", "on-device ↔ cloud ↔ offline · current: $aiMode", trailing = {
                 Text(
-                    when (prefs.aiMode) { "auto" -> "auto"; "cloud" -> "cloud"; else -> "offline" },
+                    when (aiMode) { "auto" -> "auto"; "cloud" -> "cloud"; else -> "offline" },
                     color = Accent2, fontSize = 13.sp
                 )
             }, onTap = {
-                prefs.aiMode = when (prefs.aiMode) { "auto" -> "cloud"; "cloud" -> "offline"; else -> "auto" }
+                aiMode = when (aiMode) { "auto" -> "cloud"; "cloud" -> "offline"; else -> "auto" }
+                prefs.aiMode = aiMode
             })
         }
         if (Global.prefs.feature("cloud_any")) {
@@ -675,13 +678,15 @@ private fun LookScreen() {
                     val accents = listOf(0xFF8B5CF6.toInt(), 0xFF34D399.toInt(), 0xFF38BDF8.toInt(),
                         0xFFF472B6.toInt(), 0xFFF59E0B.toInt(), 0xFFE11D48.toInt(),
                         0xFF22C55E.toInt(), 0xFF6366F1.toInt())
-                    val base = ThemeEngine.byId(prefs.themeId)
+                    // edit the theme that is ACTUALLY active — byId() only knows the
+                    // presets and silently reset a custom theme to Obsidian Aurora
+                    val base = Global.themes.current()
                     val next = accents[(accents.indexOf(base.accent) + 1).mod(accents.size)]
                     Global.themes.saveCustom(base.copy(id = "custom_editor", accent = next))
                     toast(ctx, "Accent updated ✓")
                 })
                 RowCard("Corner radius", "cycles 10 → 26 dp", onTap = {
-                    val base = ThemeEngine.byId(prefs.themeId)
+                    val base = Global.themes.current()
                     val next = ((base.radiusDp - 10 + 4) % 17) + 10
                     Global.themes.saveCustom(base.copy(id = "custom_editor", radiusDp = next))
                     toast(ctx, "Radius ${next}dp ✓")
@@ -744,8 +749,10 @@ private fun LookScreen() {
                     modifier = Modifier.width(160.dp)
                 )
             })
-            RowCard("One-handed mode", "current: ${prefs.oneHanded}", onTap = {
-                prefs.oneHanded = when (prefs.oneHanded) { "off" -> "right"; "right" -> "left"; else -> "off" }
+            var oneHanded by remember { mutableStateOf(prefs.oneHanded) }
+            RowCard("One-handed mode", "current: $oneHanded", onTap = {
+                oneHanded = when (oneHanded) { "off" -> "right"; "right" -> "left"; else -> "off" }
+                prefs.oneHanded = oneHanded
             })
             if (Global.prefs.feature("photo_keyboard")) {
                 RowCard("Background image", if (bgPath.value.isEmpty()) "none" else "set ✓", onTap = {
